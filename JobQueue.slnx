@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/JobQueue.Api/JobQueue.Api.csproj" />
+    <Project Path="src/JobQueue.Application/JobQueue.Application.csproj" />
+    <Project Path="src/JobQueue.Domain/JobQueue.Domain.csproj" />
+    <Project Path="src/JobQueue.Infrastructure/JobQueue.Infrastructure.csproj" />
+    <Project Path="src/JobQueue.Worker/JobQueue.Worker.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/JobQueue.ApiTests/JobQueue.ApiTests.csproj" />
+    <Project Path="tests/JobQueue.IntegrationTests/JobQueue.IntegrationTests.csproj" />
+    <Project Path="tests/JobQueue.UnitTests/JobQueue.UnitTests.csproj" />
+  </Folder>
+</Solution>
