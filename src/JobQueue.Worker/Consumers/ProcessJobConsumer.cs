@@ -1,3 +1,4 @@
+using System.Text.Json;
 using JobQueue.Application.Abstractions;
 using JobQueue.Domain.Enums;
 using JobQueue.Infrastructure.Messaging.Contracts;
@@ -7,8 +8,8 @@ namespace JobQueue.Worker.Consumers;
 
 /// <summary>
 /// Consumes <see cref="ProcessJob"/> messages and processes the referenced job:
-/// load from SQL Server, validate the current status, mark Processing, execute,
-/// and mark Completed.
+/// load from SQL Server, validate the current status, mark Processing, resolve and
+/// execute the matching <see cref="IJobHandler"/>, then mark Completed or Failed.
 /// </summary>
 /// <remarks>
 /// RabbitMQ provides at-least-once delivery, so the same message may arrive more than
@@ -18,11 +19,16 @@ namespace JobQueue.Worker.Consumers;
 public sealed class ProcessJobConsumer : IConsumer<ProcessJob>
 {
     private readonly IJobRepository _jobRepository;
+    private readonly IJobHandlerResolver _handlerResolver;
     private readonly ILogger<ProcessJobConsumer> _logger;
 
-    public ProcessJobConsumer(IJobRepository jobRepository, ILogger<ProcessJobConsumer> logger)
+    public ProcessJobConsumer(
+        IJobRepository jobRepository,
+        IJobHandlerResolver handlerResolver,
+        ILogger<ProcessJobConsumer> logger)
     {
         _jobRepository = jobRepository;
+        _handlerResolver = handlerResolver;
         _logger = logger;
     }
 
@@ -71,6 +77,19 @@ public sealed class ProcessJobConsumer : IConsumer<ProcessJob>
                 throw new InvalidOperationException($"Unexpected job status '{job.Status}' for job {jobId}.");
         }
 
+        var handler = _handlerResolver.Resolve(job.Type);
+        if (handler is null)
+        {
+            var error = $"No handler registered for job type '{job.Type}'.";
+            _logger.LogError("Job {JobId} failed permanently: {Error}", jobId, error);
+
+            job.Status = JobStatus.Failed;
+            job.FailedAt = DateTime.UtcNow;
+            job.LastError = error;
+            await _jobRepository.SaveChangesAsync(cancellationToken);
+            return;
+        }
+
         var workerId = $"{Environment.MachineName}-{Environment.ProcessId}";
 
         job.Status = JobStatus.Processing;
@@ -89,18 +108,60 @@ public sealed class ProcessJobConsumer : IConsumer<ProcessJob>
             workerId,
             job.CorrelationId);
 
-        // Phase 8 executes a simulated unit of work. Phase 9 replaces this with the
-        // IJobHandler abstraction resolved by Job.Type.
-        await Task.Delay(TimeSpan.FromSeconds(1), cancellationToken);
+        try
+        {
+            var executionContext = new JobExecutionContext(job, ParsePayload(job.Payload));
+            await handler.HandleAsync(executionContext, cancellationToken);
 
-        job.Status = JobStatus.Completed;
-        job.CompletedAt = DateTime.UtcNow;
-        await _jobRepository.SaveChangesAsync(cancellationToken);
+            job.Status = JobStatus.Completed;
+            job.CompletedAt = DateTime.UtcNow;
+            await _jobRepository.SaveChangesAsync(cancellationToken);
 
-        _logger.LogInformation(
-            "Job {JobId} of type {JobType} completed in {DurationMs} ms.",
-            jobId,
-            job.Type,
-            (job.CompletedAt.Value - startedAt).TotalMilliseconds);
+            _logger.LogInformation(
+                "Job {JobId} of type {JobType} completed in {DurationMs} ms.",
+                jobId,
+                job.Type,
+                (job.CompletedAt.Value - startedAt).TotalMilliseconds);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            // Host shutdown in flight: leave the job in Processing and rethrow so the
+            // message is redelivered to another worker (graceful shutdown, later phase).
+            _logger.LogWarning(
+                "Job {JobId} was interrupted by worker shutdown; the message will be redelivered.",
+                jobId);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Job {JobId} of type {JobType} failed on attempt {AttemptNumber}.",
+                jobId,
+                job.Type,
+                job.Attempts);
+
+            job.Status = JobStatus.Failed;
+            job.FailedAt = DateTime.UtcNow;
+            job.LastError = ex.Message;
+            await _jobRepository.SaveChangesAsync(cancellationToken);
+
+            // Retry, exponential backoff, and dead-letter handling arrive in phases 11-13.
+        }
+    }
+
+    private static JsonElement ParsePayload(string payload)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(payload);
+            return document.RootElement.Clone();
+        }
+        catch (JsonException)
+        {
+            // Payload should always be valid JSON; fall back to an empty object so the
+            // handler's own validation surfaces the problem.
+            return JsonSerializer.SerializeToElement(new { });
+        }
     }
 }
