@@ -63,6 +63,14 @@ public class Job
     public string? WorkerId { get; set; }
 
     /// <summary>
+    /// Database-managed optimistic concurrency token (SQL Server rowversion).
+    /// </summary>
+    public byte[] RowVersion { get; set; } = [];
+
+    /// <summary>Execution history of this job's attempts.</summary>
+    public ICollection<JobAttempt> JobAttempts { get; set; } = new List<JobAttempt>();
+
+    /// <summary>
     /// Parameterless constructor reserved for EF Core materialization.
     /// </summary>
     private Job()
