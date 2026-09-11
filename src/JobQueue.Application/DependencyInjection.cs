@@ -1,4 +1,5 @@
 using JobQueue.Application.Jobs.Commands;
+using JobQueue.Application.Jobs.Queries;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace JobQueue.Application;
@@ -14,6 +15,8 @@ public static class DependencyInjection
     public static IServiceCollection AddApplication(this IServiceCollection services)
     {
         services.AddScoped<CreateJobCommandHandler>();
+        services.AddScoped<GetJobByIdQueryHandler>();
+        services.AddScoped<ListJobsQueryHandler>();
         return services;
     }
 }

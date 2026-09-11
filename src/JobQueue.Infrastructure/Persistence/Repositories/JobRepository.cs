@@ -1,4 +1,5 @@
 using JobQueue.Application.Abstractions;
+using JobQueue.Domain.Enums;
 using JobQueue.Domain.Exceptions;
 using JobQueue.Domain.Jobs;
 using Microsoft.Data.SqlClient;
@@ -23,6 +24,36 @@ public sealed class JobRepository : IJobRepository
 
     public Task<Job?> GetByIdempotencyKeyAsync(string idempotencyKey, CancellationToken cancellationToken = default)
         => _dbContext.Jobs.AsNoTracking().FirstOrDefaultAsync(j => j.IdempotencyKey == idempotencyKey, cancellationToken);
+
+    public async Task<(IReadOnlyList<Job> Items, int TotalCount)> ListAsync(
+        JobStatus? status,
+        string? type,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken = default)
+    {
+        var query = _dbContext.Jobs.AsNoTracking().AsQueryable();
+
+        if (status.HasValue)
+        {
+            query = query.Where(j => j.Status == status.Value);
+        }
+
+        if (!string.IsNullOrWhiteSpace(type))
+        {
+            query = query.Where(j => j.Type == type);
+        }
+
+        var totalCount = await query.CountAsync(cancellationToken);
+
+        var items = await query
+            .OrderByDescending(j => j.CreatedAt)
+            .Skip((page - 1) * pageSize)
+            .Take(pageSize)
+            .ToListAsync(cancellationToken);
+
+        return (items, totalCount);
+    }
 
     public async Task AddAsync(Job job, CancellationToken cancellationToken = default)
         => await _dbContext.Jobs.AddAsync(job, cancellationToken);
