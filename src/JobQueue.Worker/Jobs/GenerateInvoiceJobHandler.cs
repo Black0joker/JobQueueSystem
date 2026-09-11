@@ -24,7 +24,7 @@ public sealed class GenerateInvoiceJobHandler : IJobHandler
             : null;
         if (string.IsNullOrWhiteSpace(orderId))
         {
-            throw new InvalidOperationException("The GenerateInvoice payload is missing the required 'orderId' property.");
+            throw new PermanentJobException("The GenerateInvoice payload is missing the required 'orderId' property.");
         }
 
         // Simulated document rendering + file write.

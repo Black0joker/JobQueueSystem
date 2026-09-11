@@ -24,7 +24,7 @@ public sealed class UpdateInventoryJobHandler : IJobHandler
             : null;
         if (string.IsNullOrWhiteSpace(orderId))
         {
-            throw new InvalidOperationException("The UpdateInventory payload is missing the required 'orderId' property.");
+            throw new PermanentJobException("The UpdateInventory payload is missing the required 'orderId' property.");
         }
 
         // Simulated database transaction.

@@ -20,6 +20,9 @@ public static class DependencyInjection
         services.AddScoped<CreateJobCommandHandler>();
         services.AddScoped<GetJobByIdQueryHandler>();
         services.AddScoped<ListJobsQueryHandler>();
+
+        services.AddScoped<IJobErrorClassifier, JobErrorClassifier>();
+
         return services;
     }
 

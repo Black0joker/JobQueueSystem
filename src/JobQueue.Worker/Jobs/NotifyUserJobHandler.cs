@@ -24,7 +24,7 @@ public sealed class NotifyUserJobHandler : IJobHandler
             : null;
         if (string.IsNullOrWhiteSpace(userId))
         {
-            throw new InvalidOperationException("The NotifyUser payload is missing the required 'userId' property.");
+            throw new PermanentJobException("The NotifyUser payload is missing the required 'userId' property.");
         }
 
         // Simulated outbound HTTP call to a notification service.

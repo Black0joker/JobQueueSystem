@@ -13,22 +13,29 @@ namespace JobQueue.Worker.Consumers;
 /// </summary>
 /// <remarks>
 /// RabbitMQ provides at-least-once delivery, so the same message may arrive more than
-/// once. Only jobs in <see cref="JobStatus.Pending"/> are executed; every other status
+/// once. Only jobs in <see cref="JobStatus.Pending"/> (or <see cref="JobStatus.Processing"/>
+/// owned by this worker, i.e. one of our own retries) are executed; every other status
 /// means the work was already done, is owned by another worker, or must not run anymore.
+/// Failed attempts follow the phase 11/12 rules: transient errors are rethrown and
+/// retried by the MassTransit retry policy until <see cref="Domain.Jobs.Job.MaxAttempts"/>
+/// is reached; permanent errors fail the job immediately without retrying.
 /// </remarks>
 public sealed class ProcessJobConsumer : IConsumer<ProcessJob>
 {
     private readonly IJobRepository _jobRepository;
     private readonly IJobHandlerResolver _handlerResolver;
+    private readonly IJobErrorClassifier _errorClassifier;
     private readonly ILogger<ProcessJobConsumer> _logger;
 
     public ProcessJobConsumer(
         IJobRepository jobRepository,
         IJobHandlerResolver handlerResolver,
+        IJobErrorClassifier errorClassifier,
         ILogger<ProcessJobConsumer> logger)
     {
         _jobRepository = jobRepository;
         _handlerResolver = handlerResolver;
+        _errorClassifier = errorClassifier;
         _logger = logger;
     }
 
@@ -36,6 +43,7 @@ public sealed class ProcessJobConsumer : IConsumer<ProcessJob>
     {
         var jobId = context.Message.JobId;
         var cancellationToken = context.CancellationToken;
+        var workerId = $"{Environment.MachineName}-{Environment.ProcessId}";
 
         var job = await _jobRepository.GetTrackedByIdAsync(jobId, cancellationToken);
         if (job is null)
@@ -56,12 +64,16 @@ public sealed class ProcessJobConsumer : IConsumer<ProcessJob>
                     job.Status);
                 return;
 
-            case JobStatus.Processing:
+            case JobStatus.Processing when job.WorkerId != workerId:
                 _logger.LogWarning(
                     "Job {JobId} is already being processed by worker {WorkerId}; skipping duplicate delivery.",
                     jobId,
                     job.WorkerId);
                 return;
+
+            case JobStatus.Processing:
+                // Owned by this worker: a retry attempt for a previously failed execution.
+                break;
 
             case JobStatus.Scheduled:
                 _logger.LogInformation(
@@ -90,12 +102,19 @@ public sealed class ProcessJobConsumer : IConsumer<ProcessJob>
             return;
         }
 
-        var workerId = $"{Environment.MachineName}-{Environment.ProcessId}";
+        // 0 for the first delivery; increases with every MassTransit retry (phase 12).
+        var retryAttempt = context.GetRetryAttempt();
 
-        job.Status = JobStatus.Processing;
-        job.StartedAt = DateTime.UtcNow;
-        job.WorkerId = workerId;
-        job.Attempts += 1;
+        if (job.Status == JobStatus.Pending)
+        {
+            job.Status = JobStatus.Processing;
+            job.StartedAt = DateTime.UtcNow;
+            job.WorkerId = workerId;
+        }
+
+        // Max() keeps the counter correct when a message is redelivered after a crash
+        // (retryAttempt resets to 0 while job.Attempts already advanced).
+        job.Attempts = Math.Max(job.Attempts, retryAttempt) + 1;
         await _jobRepository.SaveChangesAsync(cancellationToken);
 
         var startedAt = DateTime.UtcNow;
@@ -134,19 +153,52 @@ public sealed class ProcessJobConsumer : IConsumer<ProcessJob>
         }
         catch (Exception ex)
         {
-            _logger.LogError(
-                ex,
-                "Job {JobId} of type {JobType} failed on attempt {AttemptNumber}.",
-                jobId,
-                job.Type,
-                job.Attempts);
+            job.LastError = ex.Message;
+
+            var isTransient = _errorClassifier.IsTransient(ex);
+            var hasAttemptsLeft = job.Attempts < job.MaxAttempts;
+
+            if (isTransient && hasAttemptsLeft)
+            {
+                // Persist the attempt count and error, then let the MassTransit retry
+                // policy redeliver (phase 12).
+                await _jobRepository.SaveChangesAsync(cancellationToken);
+
+                _logger.LogWarning(
+                    ex,
+                    "Job {JobId} of type {JobType} failed transiently on attempt {AttemptNumber}/{MaxAttempts}; it will be retried.",
+                    jobId,
+                    job.Type,
+                    job.Attempts,
+                    job.MaxAttempts);
+                throw;
+            }
 
             job.Status = JobStatus.Failed;
             job.FailedAt = DateTime.UtcNow;
-            job.LastError = ex.Message;
             await _jobRepository.SaveChangesAsync(cancellationToken);
 
-            // Retry, exponential backoff, and dead-letter handling arrive in phases 11-13.
+            if (!isTransient)
+            {
+                _logger.LogError(
+                    ex,
+                    "Job {JobId} of type {JobType} failed permanently on attempt {AttemptNumber} and will not be retried.",
+                    jobId,
+                    job.Type,
+                    job.Attempts);
+            }
+            else
+            {
+                _logger.LogError(
+                    ex,
+                    "Job {JobId} of type {JobType} failed on its final attempt {AttemptNumber}/{MaxAttempts}; retries exhausted.",
+                    jobId,
+                    job.Type,
+                    job.Attempts,
+                    job.MaxAttempts);
+            }
+
+            // Dead-letter handling for failed jobs arrives in phase 13.
         }
     }
 

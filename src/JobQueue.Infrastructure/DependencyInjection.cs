@@ -1,12 +1,14 @@
 using System.Reflection;
 using JobQueue.Application.Abstractions;
 using JobQueue.Infrastructure.Messaging;
+
 using JobQueue.Infrastructure.Persistence;
 using JobQueue.Infrastructure.Persistence.Repositories;
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace JobQueue.Infrastructure;
 
@@ -35,6 +37,10 @@ public static class DependencyInjection
         services.AddDbContext<JobQueueDbContext>(options => options.UseSqlServer(connectionString));
 
         services.AddScoped<IJobRepository, JobRepository>();
+
+        // Replace the application-level classifier with one that also understands
+        // database errors (transient).
+        services.Replace(ServiceDescriptor.Scoped<IJobErrorClassifier, DbAwareJobErrorClassifier>());
 
         services.AddMassTransit(x =>
         {
