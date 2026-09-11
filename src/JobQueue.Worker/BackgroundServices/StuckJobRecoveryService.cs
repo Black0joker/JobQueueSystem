@@ -98,7 +98,7 @@ public sealed class StuckJobRecoveryService : BackgroundService
         {
             if (job.Attempts >= job.MaxAttempts)
             {
-                job.Status = JobStatus.DeadLettered;
+                job.TransitionTo(JobStatus.DeadLettered);
                 job.DeadLetteredAt = DateTime.UtcNow;
                 job.LastError = $"Worker heartbeat lost; attempts exhausted ({job.Attempts}/{job.MaxAttempts}).";
                 job.WorkerId = null;
@@ -112,7 +112,9 @@ public sealed class StuckJobRecoveryService : BackgroundService
                 return;
             }
 
-            job.Status = JobStatus.Pending;
+            // Processing -> Pending: the phase 20 state machine allows this reset so a
+            // healthy worker can pick the job up again.
+            job.TransitionTo(JobStatus.Pending);
             job.StartedAt = null;
             job.WorkerId = null;
             job.LastHeartbeatAt = null;

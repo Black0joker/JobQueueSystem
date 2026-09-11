@@ -35,8 +35,9 @@ public sealed class RetryJobCommandHandler
                 $"Only {string.Join(" or ", RetryableStatuses)} jobs can be retried.");
         }
 
-        // Reset the retry state so the job gets a fresh attempt budget.
-        job.Status = JobStatus.Pending;
+        // Reset the retry state so the job gets a fresh attempt budget. The transition
+        // Failed/DeadLettered -> Pending is enforced by the phase 20 state machine.
+        job.TransitionTo(JobStatus.Pending);
         job.Attempts = 0;
         job.LastError = null;
         job.FailedAt = null;

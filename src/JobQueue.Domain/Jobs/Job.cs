@@ -73,8 +73,19 @@ public class Job
     /// </summary>
     public byte[] RowVersion { get; set; } = [];
 
-    /// <summary>Execution history of this job's attempts.</summary>
+    /// <summary>Execution history of this job's attempts (phase 19).</summary>
     public ICollection<JobAttempt> JobAttempts { get; set; } = new List<JobAttempt>();
+
+    /// <summary>
+    /// Moves the job to <paramref name="next"/> following the centralized state machine
+    /// (phase 20). Throws <see cref="Exceptions.InvalidJobTransitionException"/> when the
+    /// transition is not allowed from the current status.
+    /// </summary>
+    public void TransitionTo(JobStatus next)
+    {
+        JobStatusTransitions.EnsureValid(Status, next);
+        Status = next;
+    }
 
     /// <summary>
     /// Parameterless constructor reserved for EF Core materialization.

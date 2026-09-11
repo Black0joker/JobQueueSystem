@@ -99,9 +99,10 @@ public sealed class ScheduledJobDispatcherService : BackgroundService
     {
         try
         {
-            // Scheduled -> Pending. The RowVersion token makes this atomic across
-            // dispatcher instances: only the first committer publishes the message.
-            job.Status = JobStatus.Pending;
+            // Scheduled -> Pending (phase 20 state machine). The RowVersion token makes
+            // this atomic across dispatcher instances: only the first committer publishes
+            // the message.
+            job.TransitionTo(JobStatus.Pending);
             await repository.SaveChangesAsync(cancellationToken);
         }
         catch (DbUpdateConcurrencyException)

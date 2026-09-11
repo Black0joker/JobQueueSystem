@@ -21,6 +21,7 @@ public static class DependencyInjection
         services.AddScoped<RetryJobCommandHandler>();
         services.AddScoped<CancelJobCommandHandler>();
         services.AddScoped<GetJobByIdQueryHandler>();
+        services.AddScoped<GetJobAttemptsQueryHandler>();
         services.AddScoped<ListJobsQueryHandler>();
 
         services.AddScoped<IJobErrorClassifier, JobErrorClassifier>();

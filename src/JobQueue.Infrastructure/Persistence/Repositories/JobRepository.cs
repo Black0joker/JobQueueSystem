@@ -55,6 +55,14 @@ public sealed class JobRepository : IJobRepository
             .ToListAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyList<JobAttempt>> GetAttemptsAsync(Guid jobId, CancellationToken cancellationToken = default)
+    {
+        return await _dbContext.JobAttempts.AsNoTracking()
+            .Where(a => a.JobId == jobId)
+            .OrderBy(a => a.StartedAt)
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<(IReadOnlyList<Job> Items, int TotalCount)> ListAsync(
         JobStatus? status,
         string? type,

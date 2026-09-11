@@ -24,6 +24,7 @@ public class JobsController : ControllerBase
     private readonly RetryJobCommandHandler _retryJobCommandHandler;
     private readonly CancelJobCommandHandler _cancelJobCommandHandler;
     private readonly GetJobByIdQueryHandler _getJobByIdQueryHandler;
+    private readonly GetJobAttemptsQueryHandler _getJobAttemptsQueryHandler;
     private readonly ListJobsQueryHandler _listJobsQueryHandler;
 
     public JobsController(
@@ -31,12 +32,14 @@ public class JobsController : ControllerBase
         RetryJobCommandHandler retryJobCommandHandler,
         CancelJobCommandHandler cancelJobCommandHandler,
         GetJobByIdQueryHandler getJobByIdQueryHandler,
+        GetJobAttemptsQueryHandler getJobAttemptsQueryHandler,
         ListJobsQueryHandler listJobsQueryHandler)
     {
         _createJobCommandHandler = createJobCommandHandler;
         _retryJobCommandHandler = retryJobCommandHandler;
         _cancelJobCommandHandler = cancelJobCommandHandler;
         _getJobByIdQueryHandler = getJobByIdQueryHandler;
+        _getJobAttemptsQueryHandler = getJobAttemptsQueryHandler;
         _listJobsQueryHandler = listJobsQueryHandler;
     }
 
@@ -151,6 +154,28 @@ public class JobsController : ControllerBase
             PageSize: pageSize);
 
         return Ok(response);
+    }
+
+    /// <summary>
+    /// Returns the execution history of a job: one entry per processing attempt,
+    /// earliest first (phase 19).
+    /// </summary>
+    /// <response code="200">The job's attempts.</response>
+    /// <response code="404">No job exists with the given identifier.</response>
+    [HttpGet("{id:guid}/attempts")]
+    [ProducesResponseType(typeof(IReadOnlyList<JobAttemptResponse>), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<ActionResult<IReadOnlyList<JobAttemptResponse>>> GetAttempts(
+        Guid id,
+        CancellationToken cancellationToken)
+    {
+        var attempts = await _getJobAttemptsQueryHandler.HandleAsync(id, cancellationToken);
+        if (attempts is null)
+        {
+            return NotFound();
+        }
+
+        return Ok(attempts.Select(JobAttemptResponse.FromAttempt).ToList());
     }
 
     /// <summary>

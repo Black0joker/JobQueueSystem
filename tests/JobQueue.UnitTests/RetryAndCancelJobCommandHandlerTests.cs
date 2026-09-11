@@ -170,6 +170,9 @@ public class RetryAndCancelJobCommandHandlerTests
             CancellationToken cancellationToken = default)
             => Task.FromResult<IReadOnlyList<Job>>([]);
 
+        public Task<IReadOnlyList<JobAttempt>> GetAttemptsAsync(Guid jobId, CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<JobAttempt>>([]);
+
         public Task<(IReadOnlyList<Job> Items, int TotalCount)> ListAsync(
             JobStatus? status,
             string? type,

@@ -36,7 +36,8 @@ public sealed class CancelJobCommandHandler
                 $"Only {string.Join(", ", CancellableStatuses)} jobs can be cancelled.");
         }
 
-        job.Status = JobStatus.Cancelled;
+        // Pending/Scheduled/Processing -> Cancelled, enforced by the phase 20 state machine.
+        job.TransitionTo(JobStatus.Cancelled);
         job.CancelledAt = DateTime.UtcNow;
         await _jobRepository.SaveChangesAsync(cancellationToken);
 

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using JobQueue.Application.Abstractions;
 using JobQueue.Domain.Enums;
+using JobQueue.Domain.Jobs;
 using JobQueue.Infrastructure.Messaging.Contracts;
 using JobQueue.Worker.Services;
 using JobQueue.Worker.Observability;
@@ -11,20 +12,22 @@ namespace JobQueue.Worker.Consumers;
 
 /// <summary>
 /// Consumes <see cref="ProcessJob"/> messages and processes the referenced job:
-/// load from SQL Server, validate the current status, mark Processing, resolve and
-/// execute the matching <see cref="IJobHandler"/>, then mark Completed, Failed, or
-/// DeadLettered.
+/// load from SQL Server, validate the current status, claim it as Processing through
+/// the phase 20 state machine, resolve and execute the matching <see cref="IJobHandler"/>,
+/// then mark Completed, Failed, or DeadLettered.
 /// </summary>
 /// <remarks>
 /// RabbitMQ provides at-least-once delivery, so the same message may arrive more than
 /// once. Only jobs in <see cref="JobStatus.Pending"/> (or <see cref="JobStatus.Processing"/>
 /// owned by this worker, i.e. one of our own retries) are executed; every other status
 /// means the work was already done, is owned by another worker, or must not run anymore.
-/// Failed attempts follow the phase 11-13 rules: transient errors are rethrown and
-/// retried with exponential backoff until <see cref="Domain.Jobs.Job.MaxAttempts"/> is
-/// reached, then the job is dead-lettered and the message moves to the DLQ; permanent
-/// errors fail the job immediately without retrying. While executing, the worker
-/// refreshes the job's heartbeat so the phase 14 recovery service can detect crashes.
+/// Every execution is recorded as a <see cref="JobAttempt"/> row (phase 19), giving a
+/// full history instead of only the last error. Failed attempts follow the phase 11-13
+/// rules: transient errors are rethrown and retried with exponential backoff until
+/// <see cref="Job.MaxAttempts"/> is reached, then the job is dead-lettered and the
+/// message moves to the DLQ; permanent errors fail the job immediately without retrying.
+/// While executing, the worker refreshes the job's heartbeat so the phase 14 recovery
+/// service can detect crashes.
 /// </remarks>
 public sealed class ProcessJobConsumer : IConsumer<ProcessJob>
 {
@@ -103,27 +106,14 @@ public sealed class ProcessJobConsumer : IConsumer<ProcessJob>
                 throw new InvalidOperationException($"Unexpected job status '{job.Status}' for job {jobId}.");
         }
 
-        var handler = _handlerResolver.Resolve(job.Type);
-        if (handler is null)
-        {
-            var error = $"No handler registered for job type '{job.Type}'.";
-            _logger.LogError("Job {JobId} failed permanently: {Error}", jobId, error);
-
-            job.Status = JobStatus.Failed;
-            job.FailedAt = DateTime.UtcNow;
-            job.LastError = error;
-            await _jobRepository.SaveChangesAsync(cancellationToken);
-
-            JobMetrics.JobsProcessed.WithLabels(job.Type, "failed").Inc();
-            return;
-        }
-
         // 0 for the first delivery; increases with every MassTransit retry (phase 12).
         var retryAttempt = context.GetRetryAttempt();
 
+        // Claim the job through the phase 20 state machine: Pending -> Processing.
+        // Redeliveries owned by this worker are already Processing and skip the claim.
         if (job.Status == JobStatus.Pending)
         {
-            job.Status = JobStatus.Processing;
+            job.TransitionTo(JobStatus.Processing);
             job.StartedAt = DateTime.UtcNow;
             job.WorkerId = workerId;
         }
@@ -135,6 +125,37 @@ public sealed class ProcessJobConsumer : IConsumer<ProcessJob>
         // Heartbeat claim: lets the phase 14 recovery service detect this job as stuck
         // if this worker dies mid-execution.
         job.LastHeartbeatAt = DateTime.UtcNow;
+
+        // Phase 19: record this execution in the job's history. Saved together with the
+        // claim below; later finalized with CompletedAt/FailedAt/Error on the outcome.
+        var attempt = new JobAttempt
+        {
+            Id = Guid.NewGuid(),
+            JobId = job.Id,
+            AttemptNumber = job.Attempts,
+            StartedAt = DateTime.UtcNow,
+            WorkerId = workerId
+        };
+        job.JobAttempts.Add(attempt);
+
+        var handler = _handlerResolver.Resolve(job.Type);
+        if (handler is null)
+        {
+            var error = $"No handler registered for job type '{job.Type}'.";
+            _logger.LogError("Job {JobId} failed permanently: {Error}", jobId, error);
+
+            attempt.FailedAt = DateTime.UtcNow;
+            attempt.Error = error;
+
+            job.TransitionTo(JobStatus.Failed);
+            job.FailedAt = DateTime.UtcNow;
+            job.LastError = error;
+            await _jobRepository.SaveChangesAsync(cancellationToken);
+
+            JobMetrics.JobsProcessed.WithLabels(job.Type, "failed").Inc();
+            return;
+        }
+
         await _jobRepository.SaveChangesAsync(cancellationToken);
 
         // Phase 15: count every processing attempt (first attempts + retries).
@@ -176,13 +197,18 @@ public sealed class ProcessJobConsumer : IConsumer<ProcessJob>
             {
                 // An operator cancelled the job just as the handler finished; the
                 // cancellation wins and the message is acknowledged.
+                attempt.Error = "Cancelled by an operator request; the completed handler result was discarded.";
+                await _jobRepository.SaveChangesAsync(cancellationToken);
+
                 _logger.LogInformation(
                     "Job {JobId} was cancelled while completing; leaving it Cancelled.",
                     jobId);
                 return;
             }
 
-            job.Status = JobStatus.Completed;
+            attempt.CompletedAt = DateTime.UtcNow;
+
+            job.TransitionTo(JobStatus.Completed);
             job.CompletedAt = DateTime.UtcNow;
             await _jobRepository.SaveChangesAsync(cancellationToken);
 
@@ -199,8 +225,8 @@ public sealed class ProcessJobConsumer : IConsumer<ProcessJob>
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
-            // Host shutdown in flight: leave the job in Processing and rethrow so the
-            // message is redelivered to another worker (graceful shutdown, later phase).
+            // Host shutdown in flight: leave the job in Processing (the attempt row stays
+            // open) and rethrow so the message is redelivered to another worker.
             _logger.LogWarning(
                 "Job {JobId} was interrupted by worker shutdown; the message will be redelivered.",
                 jobId);
@@ -217,6 +243,9 @@ public sealed class ProcessJobConsumer : IConsumer<ProcessJob>
             {
                 // Phase 16: the exception came from the cooperative cancellation of an
                 // operator-cancelled job. Leave it Cancelled and acknowledge the message.
+                attempt.Error = "Cancelled by an operator request while running.";
+                await _jobRepository.SaveChangesAsync(cancellationToken);
+
                 JobMetrics.JobsProcessed.WithLabels(job.Type, "cancelled").Inc();
                 _logger.LogInformation(
                     "Job {JobId} of type {JobType} was cancelled by an operator request.",
@@ -225,6 +254,8 @@ public sealed class ProcessJobConsumer : IConsumer<ProcessJob>
                 return;
             }
 
+            attempt.FailedAt = DateTime.UtcNow;
+            attempt.Error = ex.Message;
             job.LastError = ex.Message;
 
             var isTransient = _errorClassifier.IsTransient(ex);
@@ -232,10 +263,10 @@ public sealed class ProcessJobConsumer : IConsumer<ProcessJob>
 
             if (isTransient && hasAttemptsLeft)
             {
-                // Persist the attempt count and error, then let the MassTransit retry
-                // policy redeliver with exponential backoff (phases 12/13). The heartbeat
-                // is refreshed too: while waiting out the backoff nothing executes, and
-                // the phase 14 recovery must not reclaim a job that is mid-retry. This
+                // Persist the failed attempt, then let the MassTransit retry policy
+                // redeliver with exponential backoff (phases 12/13). The heartbeat is
+                // refreshed too: while waiting out the backoff nothing executes, and the
+                // phase 14 recovery must not reclaim a job that is mid-retry. This
                 // requires HeartbeatTimeoutSeconds to exceed the largest retry delay.
                 job.LastHeartbeatAt = DateTime.UtcNow;
                 await _jobRepository.SaveChangesAsync(cancellationToken);
@@ -254,7 +285,7 @@ public sealed class ProcessJobConsumer : IConsumer<ProcessJob>
             {
                 // Retries exhausted: dead-letter the job (phase 13) and rethrow so
                 // MassTransit moves the message to the _error queue (RabbitMQ DLQ).
-                job.Status = JobStatus.DeadLettered;
+                job.TransitionTo(JobStatus.DeadLettered);
                 job.DeadLetteredAt = DateTime.UtcNow;
                 await _jobRepository.SaveChangesAsync(cancellationToken);
 
@@ -271,7 +302,7 @@ public sealed class ProcessJobConsumer : IConsumer<ProcessJob>
             }
 
             // Permanent error: fail immediately without retrying or dead-lettering.
-            job.Status = JobStatus.Failed;
+            job.TransitionTo(JobStatus.Failed);
             job.FailedAt = DateTime.UtcNow;
             await _jobRepository.SaveChangesAsync(cancellationToken);
 

@@ -41,6 +41,11 @@ public interface IJobRepository
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Loads the full execution history of a job, earliest attempt first (phase 19).
+    /// </summary>
+    Task<IReadOnlyList<JobAttempt>> GetAttemptsAsync(Guid jobId, CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Lists jobs with optional status/type filtering and pagination, newest first.
     /// </summary>
     /// <param name="status">Optional status filter.</param>
