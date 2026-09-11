@@ -22,6 +22,9 @@ public sealed class JobRepository : IJobRepository
     public Task<Job?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
         => _dbContext.Jobs.AsNoTracking().FirstOrDefaultAsync(j => j.Id == id, cancellationToken);
 
+    public Task<Job?> GetTrackedByIdAsync(Guid id, CancellationToken cancellationToken = default)
+        => _dbContext.Jobs.FirstOrDefaultAsync(j => j.Id == id, cancellationToken);
+
     public Task<Job?> GetByIdempotencyKeyAsync(string idempotencyKey, CancellationToken cancellationToken = default)
         => _dbContext.Jobs.AsNoTracking().FirstOrDefaultAsync(j => j.IdempotencyKey == idempotencyKey, cancellationToken);
 

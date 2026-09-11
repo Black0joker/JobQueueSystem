@@ -1,7 +1,9 @@
+using System.Reflection;
 using JobQueue.Application.Abstractions;
 using JobQueue.Infrastructure.Messaging;
 using JobQueue.Infrastructure.Persistence;
 using JobQueue.Infrastructure.Persistence.Repositories;
+using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -14,9 +16,18 @@ namespace JobQueue.Infrastructure;
 public static class DependencyInjection
 {
     /// <summary>
-    /// Registers infrastructure services (persistence, messaging, scheduling).
+    /// Registers infrastructure services (persistence, messaging).
     /// </summary>
-    public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
+    /// <param name="services">The service collection.</param>
+    /// <param name="configuration">The application configuration.</param>
+    /// <param name="consumerAssemblies">
+    /// Assemblies scanned for MassTransit consumers. The worker passes its own assembly;
+    /// the API passes none because it only publishes messages.
+    /// </param>
+    public static IServiceCollection AddInfrastructure(
+        this IServiceCollection services,
+        IConfiguration configuration,
+        params Assembly[] consumerAssemblies)
     {
         var connectionString = configuration.GetConnectionString("JobQueue")
             ?? throw new InvalidOperationException("Connection string 'JobQueue' is not configured.");
@@ -24,7 +35,32 @@ public static class DependencyInjection
         services.AddDbContext<JobQueueDbContext>(options => options.UseSqlServer(connectionString));
 
         services.AddScoped<IJobRepository, JobRepository>();
-        services.AddSingleton<IJobPublisher, LoggingJobPublisher>();
+
+        services.AddMassTransit(x =>
+        {
+            x.SetKebabCaseEndpointNameFormatter();
+
+            foreach (var assembly in consumerAssemblies)
+            {
+                x.AddConsumers(assembly);
+            }
+
+            x.UsingRabbitMq((context, cfg) =>
+            {
+                var options = configuration.GetSection(RabbitMqOptions.SectionName)
+                                  .Get<RabbitMqOptions>() ?? new RabbitMqOptions();
+
+                cfg.Host(options.Host, h =>
+                {
+                    h.Username(options.Username);
+                    h.Password(options.Password);
+                });
+
+                cfg.ConfigureEndpoints(context);
+            });
+        });
+
+        services.AddScoped<IJobPublisher, MassTransitJobPublisher>();
 
         return services;
     }

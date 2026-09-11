@@ -11,6 +11,12 @@ public interface IJobRepository
     /// <summary>Loads a job by its identifier, or null when it does not exist.</summary>
     Task<Job?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default);
 
+    /// <summary>
+    /// Loads a job by its identifier with change tracking enabled, so the caller can
+    /// update and save it.
+    /// </summary>
+    Task<Job?> GetTrackedByIdAsync(Guid id, CancellationToken cancellationToken = default);
+
     /// <summary>Loads a job by its idempotency key, or null when it does not exist.</summary>
     Task<Job?> GetByIdempotencyKeyAsync(string idempotencyKey, CancellationToken cancellationToken = default);
 
