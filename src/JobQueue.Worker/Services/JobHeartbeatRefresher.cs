@@ -1,3 +1,4 @@
+using JobQueue.Domain.Enums;
 using JobQueue.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -5,9 +6,12 @@ namespace JobQueue.Worker.Services;
 
 /// <summary>
 /// Refreshes <c>LastHeartbeatAt</c> for a job at a fixed interval while the worker is
-/// processing it (phase 14). It runs in its own DI scope with its own DbContext and
-/// raw SQL update, so it never interferes with the consumer's tracked entity. Dispose
-/// stops the loop and awaits its exit.
+/// processing it (phase 14). Each tick also checks whether the job was cancelled via
+/// the API (phase 16): when the row's status flips to <see cref="JobStatus.Cancelled"/>,
+/// <c>onCancellationRequested</c> fires so the consumer can cancel the running handler
+/// cooperatively. The loop runs in its own DI scope with its own DbContext and raw
+/// SQL, so it never interferes with the consumer's tracked entity. Dispose stops the
+/// loop and awaits its exit.
 /// </summary>
 public sealed class JobHeartbeatRefresher : IAsyncDisposable
 {
@@ -15,6 +19,7 @@ public sealed class JobHeartbeatRefresher : IAsyncDisposable
     private readonly Guid _jobId;
     private readonly TimeSpan _interval;
     private readonly ILogger _logger;
+    private readonly Action? _onCancellationRequested;
     private readonly CancellationTokenSource _stop;
     private readonly Task _loop;
 
@@ -23,12 +28,14 @@ public sealed class JobHeartbeatRefresher : IAsyncDisposable
         Guid jobId,
         TimeSpan interval,
         ILogger logger,
-        CancellationToken linkedToken)
+        CancellationToken linkedToken,
+        Action? onCancellationRequested = null)
     {
         _scopeFactory = scopeFactory;
         _jobId = jobId;
         _interval = interval;
         _logger = logger;
+        _onCancellationRequested = onCancellationRequested;
         _stop = CancellationTokenSource.CreateLinkedTokenSource(linkedToken);
         _loop = Task.Run(RunAsync);
     }
@@ -47,6 +54,21 @@ public sealed class JobHeartbeatRefresher : IAsyncDisposable
                     await dbContext.Database.ExecuteSqlAsync(
                         $"UPDATE Jobs SET LastHeartbeatAt = SYSUTCDATETIME() WHERE Id = {_jobId}",
                         _stop.Token);
+
+                    // Phase 16: cooperative cancellation. The API flips the row to
+                    // Cancelled; observing it here lets the worker stop the handler.
+                    var status = await dbContext.Database
+                        .SqlQueryRaw<int>("SELECT Status AS Value FROM Jobs WHERE Id = {0}", _jobId)
+                        .FirstOrDefaultAsync(_stop.Token);
+
+                    if (status == (int)JobStatus.Cancelled)
+                    {
+                        _logger.LogInformation(
+                            "Cancellation requested for job {JobId}; signalling the running handler.",
+                            _jobId);
+                        _onCancellationRequested?.Invoke();
+                        break;
+                    }
                 }
                 catch (OperationCanceledException)
                 {

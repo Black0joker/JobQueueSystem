@@ -68,6 +68,10 @@ public static class DependencyInjection
 
         services.AddScoped<IJobPublisher, MassTransitJobPublisher>();
 
+        // Bind the RabbitMQ options so components (e.g. health checks) can inject them.
+        services.Configure<RabbitMqOptions>(options =>
+            configuration.GetSection(RabbitMqOptions.SectionName).Bind(options));
+
         return services;
     }
 }

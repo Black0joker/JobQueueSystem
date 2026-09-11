@@ -1,6 +1,7 @@
 using JobQueue.Application.Abstractions;
 using JobQueue.Domain.Enums;
 using JobQueue.Domain.Jobs;
+using JobQueue.Worker.Observability;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
@@ -103,6 +104,8 @@ public sealed class StuckJobRecoveryService : BackgroundService
                 job.WorkerId = null;
                 await repository.SaveChangesAsync(cancellationToken);
 
+                JobMetrics.JobsRecovered.WithLabels("dead_lettered").Inc();
+
                 _logger.LogWarning(
                     "Job {JobId} was dead-lettered by recovery because its worker stopped sending heartbeats.",
                     job.Id);
@@ -116,6 +119,8 @@ public sealed class StuckJobRecoveryService : BackgroundService
             await repository.SaveChangesAsync(cancellationToken);
 
             await publisher.PublishAsync(job.Id, job.Type, cancellationToken);
+
+            JobMetrics.JobsRecovered.WithLabels("re_dispatched").Inc();
 
             _logger.LogWarning(
                 "Job {JobId} recovered from a stale worker and re-dispatched ({AttemptsUsed}/{MaxAttempts} attempts used).",

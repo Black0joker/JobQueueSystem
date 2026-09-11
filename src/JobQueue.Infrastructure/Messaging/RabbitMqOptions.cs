@@ -8,6 +8,9 @@ public sealed class RabbitMqOptions
     /// <summary>Configuration section name.</summary>
     public const string SectionName = "RabbitMq";
 
+    /// <summary>Default AMQP port used by health checks.</summary>
+    public const int AmqpPort = 5672;
+
     /// <summary>RabbitMQ host name.</summary>
     public string Host { get; set; } = "localhost";
 

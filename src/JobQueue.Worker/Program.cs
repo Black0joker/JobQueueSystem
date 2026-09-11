@@ -19,5 +19,8 @@ builder.Services.AddInfrastructure(builder.Configuration, typeof(Program).Assemb
 // Phase 14: background sweep that recovers jobs whose worker stopped heartbeating.
 builder.Services.AddHostedService<StuckJobRecoveryService>();
 
+// Phase 15: dedicated Prometheus metrics endpoint for the worker (/metrics).
+builder.Services.AddHostedService<MetricsEndpointService>();
+
 var host = builder.Build();
 host.Run();

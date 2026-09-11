@@ -28,6 +28,9 @@ public sealed class WorkerOptions
     /// <summary>Seconds between stuck-job recovery sweeps (phase 14).</summary>
     public int RecoveryIntervalSeconds { get; set; } = 10;
 
+    /// <summary>TCP port of the worker's Prometheus metrics endpoint (phase 15).</summary>
+    public int MetricsPort { get; set; } = 5209;
+
     /// <summary>Heartbeat refresh interval as a <see cref="TimeSpan"/>.</summary>
     public TimeSpan HeartbeatInterval => TimeSpan.FromSeconds(HeartbeatIntervalSeconds);
 

@@ -1,11 +1,14 @@
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using JobQueue.Api.Contracts;
+using JobQueue.Api.Observability;
 using JobQueue.Application.Jobs.Commands;
 using JobQueue.Application.Jobs.Queries;
 using JobQueue.Domain.Enums;
+using JobQueue.Domain.Exceptions;
 using JobQueue.Domain.Jobs;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
 
 namespace JobQueue.Api.Controllers;
 
@@ -18,15 +21,21 @@ namespace JobQueue.Api.Controllers;
 public class JobsController : ControllerBase
 {
     private readonly CreateJobCommandHandler _createJobCommandHandler;
+    private readonly RetryJobCommandHandler _retryJobCommandHandler;
+    private readonly CancelJobCommandHandler _cancelJobCommandHandler;
     private readonly GetJobByIdQueryHandler _getJobByIdQueryHandler;
     private readonly ListJobsQueryHandler _listJobsQueryHandler;
 
     public JobsController(
         CreateJobCommandHandler createJobCommandHandler,
+        RetryJobCommandHandler retryJobCommandHandler,
+        CancelJobCommandHandler cancelJobCommandHandler,
         GetJobByIdQueryHandler getJobByIdQueryHandler,
         ListJobsQueryHandler listJobsQueryHandler)
     {
         _createJobCommandHandler = createJobCommandHandler;
+        _retryJobCommandHandler = retryJobCommandHandler;
+        _cancelJobCommandHandler = cancelJobCommandHandler;
         _getJobByIdQueryHandler = getJobByIdQueryHandler;
         _listJobsQueryHandler = listJobsQueryHandler;
     }
@@ -61,6 +70,12 @@ public class JobsController : ControllerBase
             CorrelationId: correlationId);
 
         var result = await _createJobCommandHandler.HandleAsync(command, cancellationToken);
+
+        if (!result.AlreadyExisted)
+        {
+            // Phase 15: count newly created jobs (idempotent hits are not new work).
+            ApiMetrics.JobsCreated.WithLabels(result.Job.Type).Inc();
+        }
 
         return Accepted(new CreateJobResponse(result.Job.Id, result.Job.Status.ToString()));
     }
@@ -131,5 +146,97 @@ public class JobsController : ControllerBase
             PageSize: pageSize);
 
         return Ok(response);
+    }
+
+    /// <summary>
+    /// Manually retries a failed or dead-lettered job: resets its retry state,
+    /// returns it to Pending, and re-enqueues it. The original job is reused.
+    /// </summary>
+    /// <response code="200">The job was reset to Pending and re-enqueued.</response>
+    /// <response code="404">No job exists with the given identifier.</response>
+    /// <response code="409">The job is in a state that cannot be retried.</response>
+    [HttpPost("{id:guid}/retry")]
+    [ProducesResponseType(typeof(JobResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<JobResponse>> Retry(Guid id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var job = await _retryJobCommandHandler.HandleAsync(new RetryJobCommand(id), cancellationToken);
+
+            ApiMetrics.JobsRetried.Inc();
+
+            return Ok(JobResponse.FromJob(job));
+        }
+        catch (JobNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (InvalidJobTransitionException ex)
+        {
+            return Conflict(new { error = ex.Message });
+        }
+    }
+
+    /// <summary>
+    /// Cancels a pending, scheduled, or processing job. Pending and scheduled jobs are
+    /// cancelled immediately; a processing job is cancelled cooperatively - the owning
+    /// worker observes the cancellation and stops the running handler. Terminal states
+    /// cannot be cancelled.
+    /// </summary>
+    /// <response code="200">The job was cancelled (or the cancellation signal was stored).</response>
+    /// <response code="404">No job exists with the given identifier.</response>
+    /// <response code="409">The job is in a state that cannot be cancelled, or a concurrent update won the race.</response>
+    [HttpPost("{id:guid}/cancel")]
+    [ProducesResponseType(typeof(JobResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<ActionResult<JobResponse>> Cancel(Guid id, CancellationToken cancellationToken)
+    {
+        try
+        {
+            var job = await _cancelJobCommandHandler.HandleAsync(new CancelJobCommand(id), cancellationToken);
+
+            ApiMetrics.JobsCancelled.Inc();
+
+            return Ok(JobResponse.FromJob(job));
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            // A heartbeat or worker save bumped the row between read and write; retry
+            // once with fresh state before surfacing the conflict.
+            try
+            {
+                var job = await _cancelJobCommandHandler.HandleAsync(new CancelJobCommand(id), cancellationToken);
+
+                ApiMetrics.JobsCancelled.Inc();
+
+                return Ok(JobResponse.FromJob(job));
+            }
+            catch (JobNotFoundException)
+            {
+                return NotFound();
+            }
+            catch (InvalidJobTransitionException ex)
+            {
+                return Conflict(new { error = ex.Message });
+            }
+            catch (DbUpdateConcurrencyException)
+            {
+                return Conflict(new
+                {
+                    error = $"Job {id} is being updated concurrently; please retry the cancellation."
+                });
+            }
+        }
+        catch (JobNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (InvalidJobTransitionException ex)
+        {
+            return Conflict(new { error = ex.Message });
+        }
     }
 }

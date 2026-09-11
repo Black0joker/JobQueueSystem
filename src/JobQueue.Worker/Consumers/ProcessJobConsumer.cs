@@ -3,6 +3,7 @@ using JobQueue.Application.Abstractions;
 using JobQueue.Domain.Enums;
 using JobQueue.Infrastructure.Messaging.Contracts;
 using JobQueue.Worker.Services;
+using JobQueue.Worker.Observability;
 using MassTransit;
 using Microsoft.Extensions.Options;
 
@@ -110,6 +111,8 @@ public sealed class ProcessJobConsumer : IConsumer<ProcessJob>
             job.FailedAt = DateTime.UtcNow;
             job.LastError = error;
             await _jobRepository.SaveChangesAsync(cancellationToken);
+
+            JobMetrics.JobsProcessed.WithLabels(job.Type, "failed").Inc();
             return;
         }
 
@@ -132,6 +135,9 @@ public sealed class ProcessJobConsumer : IConsumer<ProcessJob>
         job.LastHeartbeatAt = DateTime.UtcNow;
         await _jobRepository.SaveChangesAsync(cancellationToken);
 
+        // Phase 15: count every processing attempt (first attempts + retries).
+        JobMetrics.JobAttempts.WithLabels(job.Type).Inc();
+
         var startedAt = DateTime.UtcNow;
         _logger.LogInformation(
             "Processing job {JobId} of type {JobType} (attempt {AttemptNumber}/{MaxAttempts}, worker {WorkerId}, correlation {CorrelationId}).",
@@ -142,27 +148,46 @@ public sealed class ProcessJobConsumer : IConsumer<ProcessJob>
             workerId,
             job.CorrelationId);
 
-        // Refreshes LastHeartbeatAt in the background while the handler runs.
+        // Refreshes LastHeartbeatAt in the background while the handler runs, and
+        // watches for an operator cancellation (phase 16): when the API flips the job
+        // to Cancelled, the poller cancels executionCts and the handler cooperates.
+        using var executionCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         await using var heartbeat = new JobHeartbeatRefresher(
             _scopeFactory,
             jobId,
             _options.Value.HeartbeatInterval,
             _logger,
-            cancellationToken);
+            cancellationToken,
+            onCancellationRequested: () => executionCts.Cancel());
 
         try
         {
             var executionContext = new JobExecutionContext(job, ParsePayload(job.Payload));
-            await handler.HandleAsync(executionContext, cancellationToken);
+            await handler.HandleAsync(executionContext, executionCts.Token);
 
             // Stop the heartbeat before persisting the final state: every tick bumps the
             // row's RowVersion, so stop ticking first and resync the tracked entity.
             await heartbeat.StopAsync();
             await _jobRepository.RefreshAsync(job, cancellationToken);
 
+            if (job.Status == JobStatus.Cancelled)
+            {
+                // An operator cancelled the job just as the handler finished; the
+                // cancellation wins and the message is acknowledged.
+                _logger.LogInformation(
+                    "Job {JobId} was cancelled while completing; leaving it Cancelled.",
+                    jobId);
+                return;
+            }
+
             job.Status = JobStatus.Completed;
             job.CompletedAt = DateTime.UtcNow;
             await _jobRepository.SaveChangesAsync(cancellationToken);
+
+            // Phase 15: record a successful completion and its duration.
+            JobMetrics.JobsProcessed.WithLabels(job.Type, "completed").Inc();
+            JobMetrics.JobDuration.WithLabels(job.Type)
+                .Observe((DateTime.UtcNow - startedAt).TotalSeconds);
 
             _logger.LogInformation(
                 "Job {JobId} of type {JobType} completed in {DurationMs} ms.",
@@ -185,6 +210,18 @@ public sealed class ProcessJobConsumer : IConsumer<ProcessJob>
             // the row's RowVersion, so stop ticking first and resync the tracked entity.
             await heartbeat.StopAsync();
             await _jobRepository.RefreshAsync(job, cancellationToken);
+
+            if (job.Status == JobStatus.Cancelled)
+            {
+                // Phase 16: the exception came from the cooperative cancellation of an
+                // operator-cancelled job. Leave it Cancelled and acknowledge the message.
+                JobMetrics.JobsProcessed.WithLabels(job.Type, "cancelled").Inc();
+                _logger.LogInformation(
+                    "Job {JobId} of type {JobType} was cancelled by an operator request.",
+                    jobId,
+                    job.Type);
+                return;
+            }
 
             job.LastError = ex.Message;
 
@@ -219,6 +256,8 @@ public sealed class ProcessJobConsumer : IConsumer<ProcessJob>
                 job.DeadLetteredAt = DateTime.UtcNow;
                 await _jobRepository.SaveChangesAsync(cancellationToken);
 
+                JobMetrics.JobsProcessed.WithLabels(job.Type, "dead_lettered").Inc();
+
                 _logger.LogError(
                     ex,
                     "Job {JobId} of type {JobType} failed on its final attempt {AttemptNumber}/{MaxAttempts}; dead-lettering it.",
@@ -233,6 +272,8 @@ public sealed class ProcessJobConsumer : IConsumer<ProcessJob>
             job.Status = JobStatus.Failed;
             job.FailedAt = DateTime.UtcNow;
             await _jobRepository.SaveChangesAsync(cancellationToken);
+
+            JobMetrics.JobsProcessed.WithLabels(job.Type, "failed").Inc();
 
             _logger.LogError(
                 ex,
