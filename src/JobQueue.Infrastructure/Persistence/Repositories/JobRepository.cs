@@ -28,6 +28,19 @@ public sealed class JobRepository : IJobRepository
     public Task<Job?> GetByIdempotencyKeyAsync(string idempotencyKey, CancellationToken cancellationToken = default)
         => _dbContext.Jobs.AsNoTracking().FirstOrDefaultAsync(j => j.IdempotencyKey == idempotencyKey, cancellationToken);
 
+    public async Task<IReadOnlyList<Job>> GetStuckProcessingJobsAsync(
+        DateTime heartbeatCutoff,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        return await _dbContext.Jobs
+            .Where(j => j.Status == JobStatus.Processing
+                && (j.LastHeartbeatAt == null || j.LastHeartbeatAt < heartbeatCutoff))
+            .OrderBy(j => j.LastHeartbeatAt)
+            .Take(limit)
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<(IReadOnlyList<Job> Items, int TotalCount)> ListAsync(
         JobStatus? status,
         string? type,
@@ -60,6 +73,9 @@ public sealed class JobRepository : IJobRepository
 
     public async Task AddAsync(Job job, CancellationToken cancellationToken = default)
         => await _dbContext.Jobs.AddAsync(job, cancellationToken);
+
+    public Task RefreshAsync(Job job, CancellationToken cancellationToken = default)
+        => _dbContext.Entry(job).ReloadAsync(cancellationToken);
 
     public async Task SaveChangesAsync(CancellationToken cancellationToken = default)
     {

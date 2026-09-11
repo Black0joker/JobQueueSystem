@@ -10,14 +10,23 @@ namespace JobQueue.Worker.Jobs;
 /// "subject"); a missing recipient is a permanent payload error.
 /// </summary>
 /// <remarks>
-/// Failure-scenario test hook: a payload property "failAttempts" (integer) makes the
-/// first N executions throw a <see cref="TimeoutException"/> (transient) before the
-/// simulated send succeeds. Used to exercise the retry policy end to end.
+/// Failure-scenario test hooks (used by the phase 13/14 verifications and reusable
+/// for phase 16 failure testing):
+/// <list type="bullet">
+/// <item>"failAttempts": N - the first N executions throw a TimeoutException (transient).</item>
+/// <item>"workSeconds": S with "slowAttempts": N - the first N executions take S seconds,
+/// simulating a long-running job; later executions use the normal 2-second delay.</item>
+/// </list>
 /// </remarks>
 public sealed class SendEmailJobHandler : IJobHandler
 {
-    /// <summary>Keeps the simulated failure count per job across retry attempts.</summary>
-    private static readonly ConcurrentDictionary<Guid, int> SimulatedFailures = new();
+    private static readonly TimeSpan DefaultWorkDuration = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// Counts executions per job so simulated failures/delays apply only to the first
+    /// N attempts. Survives in-process retries; a restarted worker starts fresh.
+    /// </summary>
+    private static readonly ConcurrentDictionary<Guid, int> SimulatedExecutions = new();
 
     private readonly ILogger<SendEmailJobHandler> _logger;
 
@@ -36,14 +45,16 @@ public sealed class SendEmailJobHandler : IJobHandler
             throw new PermanentJobException("The SendEmail payload is missing the required 'to' property.");
         }
 
-        SimulateTransientFailures(context);
+        var executionNumber = SimulatedExecutions.AddOrUpdate(context.Job.Id, 1, (_, count) => count + 1);
+
+        FailIfRequested(context, executionNumber);
 
         var subject = context.Payload.TryGetProperty("subject", out var subjectElement)
             ? subjectElement.GetString()
             : null;
 
         // Simulated SMTP round-trip.
-        await Task.Delay(TimeSpan.FromSeconds(2), cancellationToken);
+        await Task.Delay(ResolveWorkDuration(context, executionNumber), cancellationToken);
 
         _logger.LogInformation(
             "Job {JobId}: simulated email sent to {To} (subject: {Subject}).",
@@ -52,23 +63,31 @@ public sealed class SendEmailJobHandler : IJobHandler
             subject ?? "(none)");
     }
 
-    private static void SimulateTransientFailures(JobExecutionContext context)
+    private static void FailIfRequested(JobExecutionContext context, int executionNumber)
     {
-        var failAttempts = context.Payload.TryGetProperty("failAttempts", out var element)
-            && element.ValueKind == JsonValueKind.Number
-                ? element.GetInt32()
-                : 0;
-
-        if (failAttempts <= 0)
-        {
-            return;
-        }
-
-        var failuresSoFar = SimulatedFailures.AddOrUpdate(context.Job.Id, 1, (_, count) => count + 1);
-        if (failuresSoFar <= failAttempts)
+        var failAttempts = ReadInt(context.Payload, "failAttempts");
+        if (failAttempts > 0 && executionNumber <= failAttempts)
         {
             throw new TimeoutException(
-                $"Simulated transient failure {failuresSoFar}/{failAttempts} for job {context.Job.Id}.");
+                $"Simulated transient failure {executionNumber}/{failAttempts} for job {context.Job.Id}.");
         }
     }
+
+    private static TimeSpan ResolveWorkDuration(JobExecutionContext context, int executionNumber)
+    {
+        var workSeconds = ReadInt(context.Payload, "workSeconds");
+        var slowAttempts = ReadInt(context.Payload, "slowAttempts");
+
+        if (workSeconds > 0 && slowAttempts > 0 && executionNumber <= slowAttempts)
+        {
+            return TimeSpan.FromSeconds(workSeconds);
+        }
+
+        return DefaultWorkDuration;
+    }
+
+    private static int ReadInt(JsonElement payload, string propertyName)
+        => payload.TryGetProperty(propertyName, out var element) && element.ValueKind == JsonValueKind.Number
+            ? element.GetInt32()
+            : 0;
 }

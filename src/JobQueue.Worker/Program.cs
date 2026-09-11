@@ -1,6 +1,7 @@
 using JobQueue.Application;
 using JobQueue.Infrastructure;
 using JobQueue.Worker;
+using JobQueue.Worker.BackgroundServices;
 
 var builder = Host.CreateApplicationBuilder(args);
 
@@ -14,6 +15,9 @@ builder.Services.Configure<WorkerOptions>(builder.Configuration.GetSection(Worke
 
 // The worker assembly owns the MassTransit consumers that process jobs from RabbitMQ.
 builder.Services.AddInfrastructure(builder.Configuration, typeof(Program).Assembly);
+
+// Phase 14: background sweep that recovers jobs whose worker stopped heartbeating.
+builder.Services.AddHostedService<StuckJobRecoveryService>();
 
 var host = builder.Build();
 host.Run();

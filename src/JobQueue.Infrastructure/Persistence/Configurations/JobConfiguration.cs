@@ -28,6 +28,8 @@ public class JobConfiguration : IEntityTypeConfiguration<Job>
         builder.Property(j => j.CompletedAt);
         builder.Property(j => j.FailedAt);
         builder.Property(j => j.CancelledAt);
+        builder.Property(j => j.DeadLetteredAt);
+        builder.Property(j => j.LastHeartbeatAt);
         builder.Property(j => j.LastError); // nvarchar(max)
         builder.Property(j => j.IdempotencyKey).HasMaxLength(200);
         builder.Property(j => j.CorrelationId);

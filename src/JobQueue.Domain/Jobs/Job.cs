@@ -50,6 +50,12 @@ public class Job
     /// <summary>UTC timestamp when the job was cancelled.</summary>
     public DateTime? CancelledAt { get; set; }
 
+    /// <summary>UTC timestamp when the job was dead-lettered after exhausting its attempts.</summary>
+    public DateTime? DeadLetteredAt { get; set; }
+
+    /// <summary>UTC timestamp of the last heartbeat from the worker owning this job (phase 14).</summary>
+    public DateTime? LastHeartbeatAt { get; set; }
+
     /// <summary>The error message from the most recent failed attempt, if any.</summary>
     public string? LastError { get; set; }
 

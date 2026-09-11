@@ -34,6 +34,8 @@ public sealed record JobResponse
 
     public DateTime? CancelledAt { get; init; }
 
+    public DateTime? DeadLetteredAt { get; init; }
+
     public string? LastError { get; init; }
 
     public string? IdempotencyKey { get; init; }
@@ -58,6 +60,7 @@ public sealed record JobResponse
         CompletedAt = job.CompletedAt,
         FailedAt = job.FailedAt,
         CancelledAt = job.CancelledAt,
+        DeadLetteredAt = job.DeadLetteredAt,
         LastError = job.LastError,
         IdempotencyKey = job.IdempotencyKey,
         CorrelationId = job.CorrelationId,
