@@ -88,8 +88,10 @@ public sealed class ProcessJobConsumer : IConsumer<ProcessJob>
                 break;
 
             case JobStatus.Scheduled:
+                // The phase 17 dispatcher flips jobs to Pending before publishing, so
+                // a Scheduled message here is a race/leftover; the dispatcher owns it.
                 _logger.LogInformation(
-                    "Job {JobId} is scheduled for {ScheduledAt:O}; it will be dispatched by the scheduler (later phase). Skipping.",
+                    "Job {JobId} is scheduled for {ScheduledAt:O}; the scheduled-job dispatcher owns it. Skipping.",
                     jobId,
                     job.ScheduledAt);
                 return;

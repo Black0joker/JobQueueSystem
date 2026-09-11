@@ -31,6 +31,16 @@ public interface IJobRepository
         CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Loads up to <paramref name="limit"/> tracked Scheduled jobs whose ScheduledAt
+    /// is at or before <paramref name="dueBeforeUtc"/>, earliest first (phase 17
+    /// scheduled-job dispatching).
+    /// </summary>
+    Task<IReadOnlyList<Job>> GetDueScheduledJobsAsync(
+        DateTime dueBeforeUtc,
+        int limit,
+        CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Lists jobs with optional status/type filtering and pagination, newest first.
     /// </summary>
     /// <param name="status">Optional status filter.</param>

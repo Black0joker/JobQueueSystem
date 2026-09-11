@@ -61,7 +61,7 @@ public sealed class CreateJobCommandHandler
         }
 
         // Only immediately dispatchable jobs are enqueued here; scheduled jobs are
-        // dispatched later by the scheduler (later phase).
+        // dispatched once due by the worker's scheduled-job dispatcher (phase 17).
         if (job.Status == JobStatus.Pending)
         {
             await _jobPublisher.PublishAsync(job.Id, job.Type, cancellationToken);

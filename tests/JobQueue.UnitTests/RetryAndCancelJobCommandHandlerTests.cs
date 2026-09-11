@@ -164,6 +164,12 @@ public class RetryAndCancelJobCommandHandlerTests
             CancellationToken cancellationToken = default)
             => Task.FromResult<IReadOnlyList<Job>>([]);
 
+        public Task<IReadOnlyList<Job>> GetDueScheduledJobsAsync(
+            DateTime dueBeforeUtc,
+            int limit,
+            CancellationToken cancellationToken = default)
+            => Task.FromResult<IReadOnlyList<Job>>([]);
+
         public Task<(IReadOnlyList<Job> Items, int TotalCount)> ListAsync(
             JobStatus? status,
             string? type,

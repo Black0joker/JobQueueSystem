@@ -28,6 +28,9 @@ public sealed class WorkerOptions
     /// <summary>Seconds between stuck-job recovery sweeps (phase 14).</summary>
     public int RecoveryIntervalSeconds { get; set; } = 10;
 
+    /// <summary>Seconds between scheduled-job dispatch sweeps (phase 17).</summary>
+    public int DispatchIntervalSeconds { get; set; } = 5;
+
     /// <summary>TCP port of the worker's Prometheus metrics endpoint (phase 15).</summary>
     public int MetricsPort { get; set; } = 5209;
 
@@ -39,4 +42,7 @@ public sealed class WorkerOptions
 
     /// <summary>Recovery sweep interval as a <see cref="TimeSpan"/>.</summary>
     public TimeSpan RecoveryInterval => TimeSpan.FromSeconds(RecoveryIntervalSeconds);
+
+    /// <summary>Dispatch sweep interval as a <see cref="TimeSpan"/>.</summary>
+    public TimeSpan DispatchInterval => TimeSpan.FromSeconds(DispatchIntervalSeconds);
 }

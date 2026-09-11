@@ -41,6 +41,20 @@ public sealed class JobRepository : IJobRepository
             .ToListAsync(cancellationToken);
     }
 
+    public async Task<IReadOnlyList<Job>> GetDueScheduledJobsAsync(
+        DateTime dueBeforeUtc,
+        int limit,
+        CancellationToken cancellationToken = default)
+    {
+        return await _dbContext.Jobs
+            .Where(j => j.Status == JobStatus.Scheduled
+                && j.ScheduledAt != null
+                && j.ScheduledAt <= dueBeforeUtc)
+            .OrderBy(j => j.ScheduledAt)
+            .Take(limit)
+            .ToListAsync(cancellationToken);
+    }
+
     public async Task<(IReadOnlyList<Job> Items, int TotalCount)> ListAsync(
         JobStatus? status,
         string? type,

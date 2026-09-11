@@ -31,4 +31,9 @@ public static class JobMetrics
         "jobqueue_jobs_recovered_total",
         "Number of stuck jobs recovered by the heartbeat recovery service.",
         new CounterConfiguration { LabelNames = ["result"] });
+
+    /// <summary>Scheduled jobs dispatched by the phase 17 dispatcher.</summary>
+    public static readonly Counter ScheduledDispatched = Metrics.CreateCounter(
+        "jobqueue_scheduled_dispatched_total",
+        "Number of scheduled jobs dispatched when they became due.");
 }

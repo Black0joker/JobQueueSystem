@@ -76,6 +76,11 @@ public class JobsController : ControllerBase
             // Phase 15: count newly created jobs (idempotent hits are not new work).
             ApiMetrics.JobsCreated.WithLabels(result.Job.Type).Inc();
         }
+        else
+        {
+            // Phase 18: an idempotent replay returns the original job, unchanged.
+            Response.Headers["Idempotent-Replay"] = "true";
+        }
 
         return Accepted(new CreateJobResponse(result.Job.Id, result.Job.Status.ToString()));
     }
