@@ -1,6 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json;
 using JobQueue.Api.Contracts;
+using JobQueue.Api.Middleware;
 using JobQueue.Api.Observability;
 using JobQueue.Application.Jobs.Commands;
 using JobQueue.Application.Jobs.Queries;
@@ -59,9 +60,15 @@ public class JobsController : ControllerBase
             : "{}";
 
         var idempotencyKey = Request.Headers["Idempotency-Key"].FirstOrDefault();
-        var correlationId = Guid.TryParse(Request.Headers["X-Correlation-Id"].FirstOrDefault(), out var parsed)
-            ? parsed
-            : Guid.NewGuid();
+
+        // Phase 23: prefer the correlation id resolved by CorrelationIdMiddleware (which
+        // also echoes it in the response); fall back to parsing the header directly.
+        var correlationId = HttpContext.Items.TryGetValue(CorrelationIdMiddleware.HttpContextItemKey, out var item)
+                && item is Guid middlewareCorrelationId
+            ? middlewareCorrelationId
+            : Guid.TryParse(Request.Headers[CorrelationIdMiddleware.HeaderName].FirstOrDefault(), out var parsed)
+                ? parsed
+                : Guid.NewGuid();
 
         var command = new CreateJobCommand(
             Type: request.Type,

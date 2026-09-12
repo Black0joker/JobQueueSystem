@@ -3,10 +3,11 @@ using JobQueue.Infrastructure.Messaging;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
 
-namespace JobQueue.Api.Health;
+namespace JobQueue.Infrastructure.Health;
 
 /// <summary>
-/// Phase 15 health check: verifies that the RabbitMQ broker's AMQP port is reachable.
+/// Phase 15/24 health check: verifies that the RabbitMQ broker's AMQP port is reachable.
+/// Shared by the API and worker readiness endpoints.
 /// </summary>
 public sealed class RabbitMqHealthCheck : IHealthCheck
 {

@@ -16,6 +16,15 @@ public sealed class MassTransitJobPublisher : IJobPublisher
         _publishEndpoint = publishEndpoint;
     }
 
-    public Task PublishAsync(Guid jobId, string jobType, CancellationToken cancellationToken = default)
-        => _publishEndpoint.Publish(new ProcessJob { JobId = jobId, Type = jobType }, cancellationToken);
+    public Task PublishAsync(
+        Guid jobId,
+        string jobType,
+        Guid? correlationId = null,
+        CancellationToken cancellationToken = default)
+        => _publishEndpoint.Publish(
+            new ProcessJob { JobId = jobId, Type = jobType },
+            // Phase 23: the correlation id travels in the message envelope so consumers
+            // can trace the job end to end.
+            context => context.CorrelationId = correlationId,
+            cancellationToken);
 }

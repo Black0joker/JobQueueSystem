@@ -169,6 +169,17 @@ public sealed class ProcessJobConsumer : IConsumer<ProcessJob>
         JobMetrics.JobAttempts.WithLabels(job.Type).Inc();
 
         var startedAt = DateTime.UtcNow;
+
+        // Phase 23: structured logging scope for the entire job execution, carrying JobId,
+        // CorrelationId, and AttemptNumber so every log entry is traceable end to end.
+        using var loggingScope = _logger.BeginScope(new Dictionary<string, object?>
+        {
+            ["JobId"] = jobId,
+            ["CorrelationId"] = job.CorrelationId,
+            ["AttemptNumber"] = job.Attempts,
+            ["WorkerId"] = workerId
+        });
+
         _logger.LogInformation(
             "Processing job {JobId} of type {JobType} (attempt {AttemptNumber}/{MaxAttempts}, worker {WorkerId}, correlation {CorrelationId}).",
             jobId,

@@ -47,6 +47,22 @@ public class CreateJobCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_PropagatesCorrelationIdToThePublishedMessage()
+    {
+        // Phase 23: the correlation id must travel with the message so the worker
+        // can trace the job end to end (HTTP request -> job -> message -> consumer).
+        var correlationId = Guid.NewGuid();
+        var repository = new FakeJobRepository();
+        var publisher = new FakeJobPublisher();
+
+        var result = await new CreateJobCommandHandler(repository, publisher).HandleAsync(
+            new CreateJobCommand("SendEmail", "{}", 0, 3, null, null, correlationId));
+
+        Assert.Equal(correlationId, result.Job.CorrelationId);
+        Assert.Equal(correlationId, publisher.LastCorrelationId);
+    }
+
+    [Fact]
     public async Task HandleAsync_DoesNotPublishScheduledJob()
     {
         var repository = new FakeJobRepository();
@@ -181,10 +197,17 @@ public class CreateJobCommandHandlerTests
 
         public (Guid JobId, string Type)? Published { get; private set; }
 
-        public Task PublishAsync(Guid jobId, string type, CancellationToken cancellationToken = default)
+        public Guid? LastCorrelationId { get; private set; }
+
+        public Task PublishAsync(
+            Guid jobId,
+            string type,
+            Guid? correlationId = null,
+            CancellationToken cancellationToken = default)
         {
             _operations?.Add("publish");
             Published = (jobId, type);
+            LastCorrelationId = correlationId;
             return Task.CompletedTask;
         }
     }

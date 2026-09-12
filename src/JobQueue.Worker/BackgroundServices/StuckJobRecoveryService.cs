@@ -121,7 +121,7 @@ public sealed class StuckJobRecoveryService : BackgroundService
 
             // Phase 22: publish BEFORE saving so the reset and the outbox message commit
             // atomically; a concurrency conflict below discards the buffered message.
-            await publisher.PublishAsync(job.Id, job.Type, cancellationToken);
+            await publisher.PublishAsync(job.Id, job.Type, job.CorrelationId, cancellationToken);
 
             await repository.SaveChangesAsync(cancellationToken);
 

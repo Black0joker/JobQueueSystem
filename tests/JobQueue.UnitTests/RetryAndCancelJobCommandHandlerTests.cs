@@ -233,7 +233,11 @@ public class RetryAndCancelJobCommandHandlerTests
 
         public (Guid JobId, string Type)? Published { get; private set; }
 
-        public Task PublishAsync(Guid jobId, string type, CancellationToken cancellationToken = default)
+        public Task PublishAsync(
+            Guid jobId,
+            string type,
+            Guid? correlationId = null,
+            CancellationToken cancellationToken = default)
         {
             _operations?.Add("publish");
             Published = (jobId, type);

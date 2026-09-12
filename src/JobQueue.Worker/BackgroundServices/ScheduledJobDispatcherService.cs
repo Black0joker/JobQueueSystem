@@ -106,7 +106,7 @@ public sealed class ScheduledJobDispatcherService : BackgroundService
             // Phase 22: publish BEFORE saving so the transition and the outbox message are
             // committed in one transaction. On a concurrency conflict below, the buffered
             // message is discarded together with the rolled-back transaction.
-            await publisher.PublishAsync(job.Id, job.Type, cancellationToken);
+            await publisher.PublishAsync(job.Id, job.Type, job.CorrelationId, cancellationToken);
 
             await repository.SaveChangesAsync(cancellationToken);
         }

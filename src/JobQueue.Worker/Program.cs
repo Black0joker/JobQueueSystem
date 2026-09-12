@@ -1,5 +1,7 @@
 using JobQueue.Application;
 using JobQueue.Infrastructure;
+using JobQueue.Infrastructure.Health;
+using JobQueue.Infrastructure.Persistence;
 using JobQueue.Worker;
 using JobQueue.Worker.BackgroundServices;
 
@@ -22,7 +24,15 @@ builder.Services.AddHostedService<StuckJobRecoveryService>();
 // Phase 17: dispatches Scheduled jobs once their ScheduledAt time has passed.
 builder.Services.AddHostedService<ScheduledJobDispatcherService>();
 
-// Phase 15: dedicated Prometheus metrics endpoint for the worker (/metrics).
+// Phase 24: readiness probes against the critical infrastructure dependencies. The
+// worker's diagnostics endpoint (/health/ready on Worker:MetricsPort) fails while SQL
+// Server or RabbitMQ is unavailable, so orchestrators stop routing work to an instance
+// that cannot do its job.
+builder.Services.AddHealthChecks()
+    .AddDbContextCheck<JobQueueDbContext>("sqlserver", tags: new[] { "ready" })
+    .AddCheck<RabbitMqHealthCheck>("rabbitmq", tags: new[] { "ready" });
+
+// Phase 15 + 24: dedicated diagnostics endpoints (/metrics, /health, /health/ready).
 builder.Services.AddHostedService<MetricsEndpointService>();
 
 var host = builder.Build();

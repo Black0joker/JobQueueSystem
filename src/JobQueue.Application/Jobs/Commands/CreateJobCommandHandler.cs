@@ -55,7 +55,7 @@ public sealed class CreateJobCommandHandler
             // by the worker's scheduled-job dispatcher (phase 17).
             if (job.Status == JobStatus.Pending)
             {
-                await _jobPublisher.PublishAsync(job.Id, job.Type, cancellationToken);
+                await _jobPublisher.PublishAsync(job.Id, job.Type, job.CorrelationId, cancellationToken);
             }
 
             await _jobRepository.SaveChangesAsync(cancellationToken);

@@ -1,7 +1,9 @@
-using JobQueue.Api.Health;
+using JobQueue.Api.Middleware;
 using JobQueue.Application;
 using JobQueue.Infrastructure;
+using JobQueue.Infrastructure.Health;
 using JobQueue.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Prometheus;
 using Scalar.AspNetCore;
 
@@ -15,13 +17,17 @@ builder.Services.AddControllers();
 // Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
 builder.Services.AddOpenApi();
 
-// Phase 15: health checks against the two infrastructure dependencies.
-// /health fails when SQL Server or RabbitMQ is unavailable.
+// Phase 24 health checks: /health/ready fails while SQL Server or RabbitMQ is
+// unavailable; /health is a dependency-free liveness probe.
 builder.Services.AddHealthChecks()
-    .AddDbContextCheck<JobQueueDbContext>("sqlserver")
-    .AddCheck<RabbitMqHealthCheck>("rabbitmq");
+    .AddDbContextCheck<JobQueueDbContext>("sqlserver", tags: new[] { "ready" })
+    .AddCheck<RabbitMqHealthCheck>("rabbitmq", tags: new[] { "ready" });
 
 var app = builder.Build();
+
+// Phase 23: give every request a correlation id (X-Correlation-Id), echo it in the
+// response, and enrich all request-scoped log entries with it.
+app.UseMiddleware<CorrelationIdMiddleware>();
 
 // Configure the HTTP request pipeline.
 // OpenAPI document + Scalar interactive reference UI. Gate these behind
@@ -29,11 +35,19 @@ var app = builder.Build();
 app.MapOpenApi();
 app.MapScalarApiReference(options => options.WithTitle("JobQueue API"));
 
-// Phase 15: observability — Prometheus /metrics (including per-request HTTP
-// metrics) and the /health endpoint.
+// Phase 15: observability - Prometheus /metrics (including per-request HTTP metrics).
 app.UseHttpMetrics();
-app.MapHealthChecks("/health");
 app.MapMetrics();
+
+// Phase 24: liveness (the process can serve requests) vs readiness (dependencies OK).
+app.MapHealthChecks("/health", new HealthCheckOptions
+{
+    Predicate = _ => false
+});
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("ready")
+});
 
 app.UseHttpsRedirection();
 

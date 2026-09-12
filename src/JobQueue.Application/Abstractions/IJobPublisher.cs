@@ -9,6 +9,13 @@ namespace JobQueue.Application.Abstractions;
 /// </remarks>
 public interface IJobPublisher
 {
-    /// <summary>Enqueues the given job for processing.</summary>
-    Task PublishAsync(Guid jobId, string jobType, CancellationToken cancellationToken = default);
+    /// <summary>
+    /// Enqueues the given job for processing. The optional correlation id travels with
+    /// the message (phase 23) so workers can trace the job end to end.
+    /// </summary>
+    Task PublishAsync(
+        Guid jobId,
+        string jobType,
+        Guid? correlationId = null,
+        CancellationToken cancellationToken = default);
 }

@@ -50,7 +50,7 @@ public sealed class RetryJobCommandHandler
         // the state reset and the outbox message commit atomically. The worker picks the
         // message up like any new job; the consumer's status guard skips the message if the
         // job is cancelled again before delivery.
-        await _jobPublisher.PublishAsync(job.Id, job.Type, cancellationToken);
+        await _jobPublisher.PublishAsync(job.Id, job.Type, job.CorrelationId, cancellationToken);
 
         await _jobRepository.SaveChangesAsync(cancellationToken);
 
