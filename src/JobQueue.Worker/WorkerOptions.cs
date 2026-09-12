@@ -8,6 +8,9 @@ public sealed class WorkerOptions
     /// <summary>Configuration section name.</summary>
     public const string SectionName = "Worker";
 
+    /// <summary>Default graceful-shutdown window in seconds (phase 25).</summary>
+    public const int DefaultShutdownTimeoutSeconds = 60;
+
     /// <summary>
     /// Number of messages this worker instance processes concurrently. Defaults to 1;
     /// raise it (and/or run more worker instances) to scale out.
@@ -30,6 +33,14 @@ public sealed class WorkerOptions
 
     /// <summary>Seconds between scheduled-job dispatch sweeps (phase 17).</summary>
     public int DispatchIntervalSeconds { get; set; } = 5;
+
+    /// <summary>
+    /// Seconds the host waits for in-flight jobs to finish during graceful shutdown
+    /// (phase 25). MassTransit stops accepting new messages and drains running consumers
+    /// within this window; whatever is still running afterwards is redelivered to a
+    /// healthy worker.
+    /// </summary>
+    public int ShutdownTimeoutSeconds { get; set; } = DefaultShutdownTimeoutSeconds;
 
     /// <summary>TCP port of the worker's Prometheus metrics endpoint (phase 15).</summary>
     public int MetricsPort { get; set; } = 5209;

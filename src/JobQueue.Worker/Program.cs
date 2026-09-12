@@ -7,6 +7,15 @@ using JobQueue.Worker.BackgroundServices;
 
 var builder = Host.CreateApplicationBuilder(args);
 
+// Phase 25: graceful shutdown. On SIGTERM/SIGINT the host stops accepting new work and
+// gives in-flight jobs up to Worker:ShutdownTimeoutSeconds to finish before force-stopping.
+// MassTransit stops consuming and waits for running consumers within this window; the
+// consumer rethrows the shutdown cancellation instead of saving a wrong outcome, so an
+// interrupted job is redelivered to a healthy worker.
+builder.Services.Configure<HostOptions>(options =>
+    options.ShutdownTimeout = TimeSpan.FromSeconds(
+        builder.Configuration.GetValue("Worker:ShutdownTimeoutSeconds", WorkerOptions.DefaultShutdownTimeoutSeconds)));
+
 builder.Services.AddApplication();
 
 // Phase 9: discover the IJobHandler implementations hosted by the worker assembly.

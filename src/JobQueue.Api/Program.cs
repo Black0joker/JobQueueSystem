@@ -4,6 +4,7 @@ using JobQueue.Infrastructure;
 using JobQueue.Infrastructure.Health;
 using JobQueue.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.EntityFrameworkCore;
 using Prometheus;
 using Scalar.AspNetCore;
 
@@ -24,6 +25,15 @@ builder.Services.AddHealthChecks()
     .AddCheck<RabbitMqHealthCheck>("rabbitmq", tags: new[] { "ready" });
 
 var app = builder.Build();
+
+// Phase 26: docker/dev convenience - apply pending EF migrations on startup when
+// explicitly enabled (docker-compose sets Database__ApplyMigrationsOnStartup=true).
+if (builder.Configuration.GetValue<bool>("Database:ApplyMigrationsOnStartup"))
+{
+    using var scope = app.Services.CreateScope();
+    var dbContext = scope.ServiceProvider.GetRequiredService<JobQueueDbContext>();
+    dbContext.Database.Migrate();
+}
 
 // Phase 23: give every request a correlation id (X-Correlation-Id), echo it in the
 // response, and enrich all request-scoped log entries with it.

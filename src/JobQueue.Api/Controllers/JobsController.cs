@@ -164,6 +164,31 @@ public class JobsController : ControllerBase
     }
 
     /// <summary>
+    /// Lists failed jobs, newest first (phase 27 convenience endpoint, equivalent to
+    /// GET /jobs?status=Failed).
+    /// </summary>
+    /// <param name="page">One-based page number. Defaults to 1.</param>
+    /// <param name="pageSize">Items per page (1-100). Defaults to 20.</param>
+    /// <response code="200">The failed jobs.</response>
+    [HttpGet("failed")]
+    [ProducesResponseType(typeof(PagedJobsResponse), StatusCodes.Status200OK)]
+    public async Task<ActionResult<PagedJobsResponse>> Failed(
+        [FromQuery][Range(1, int.MaxValue)] int page = 1,
+        [FromQuery][Range(1, ListJobsQueryHandler.MaxPageSize)] int pageSize = ListJobsQueryHandler.DefaultPageSize,
+        CancellationToken cancellationToken = default)
+    {
+        var query = new ListJobsQuery(Status: JobStatus.Failed, Type: null, Page: page, PageSize: pageSize);
+
+        var (items, totalCount) = await _listJobsQueryHandler.HandleAsync(query, cancellationToken);
+
+        return Ok(new PagedJobsResponse(
+            Items: items.Select(JobResponse.FromJob).ToList(),
+            TotalCount: totalCount,
+            Page: page,
+            PageSize: pageSize));
+    }
+
+    /// <summary>
     /// Returns the execution history of a job: one entry per processing attempt,
     /// earliest first (phase 19).
     /// </summary>
