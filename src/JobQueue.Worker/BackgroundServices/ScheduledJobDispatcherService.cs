@@ -100,9 +100,14 @@ public sealed class ScheduledJobDispatcherService : BackgroundService
         try
         {
             // Scheduled -> Pending (phase 20 state machine). The RowVersion token makes
-            // this atomic across dispatcher instances: only the first committer publishes
-            // the message.
+            // this atomic across dispatcher instances: only the first committer wins.
             job.TransitionTo(JobStatus.Pending);
+
+            // Phase 22: publish BEFORE saving so the transition and the outbox message are
+            // committed in one transaction. On a concurrency conflict below, the buffered
+            // message is discarded together with the rolled-back transaction.
+            await publisher.PublishAsync(job.Id, job.Type, cancellationToken);
+
             await repository.SaveChangesAsync(cancellationToken);
         }
         catch (DbUpdateConcurrencyException)
@@ -113,8 +118,6 @@ public sealed class ScheduledJobDispatcherService : BackgroundService
                 job.Id);
             return;
         }
-
-        await publisher.PublishAsync(job.Id, job.Type, cancellationToken);
 
         JobMetrics.ScheduledDispatched.Inc();
 

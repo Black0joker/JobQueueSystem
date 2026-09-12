@@ -46,11 +46,24 @@ public sealed class CreateJobCommandHandler
         try
         {
             await _jobRepository.AddAsync(job, cancellationToken);
+
+            // Phase 22 (transactional outbox): publish BEFORE saving. The MassTransit EF
+            // Core outbox buffers the message inside the same DbContext transaction, so the
+            // job row and the outbox message commit atomically; job creation no longer
+            // depends on RabbitMQ being reachable during the HTTP request. Only immediately
+            // dispatchable jobs are enqueued here; scheduled jobs are dispatched once due
+            // by the worker's scheduled-job dispatcher (phase 17).
+            if (job.Status == JobStatus.Pending)
+            {
+                await _jobPublisher.PublishAsync(job.Id, job.Type, cancellationToken);
+            }
+
             await _jobRepository.SaveChangesAsync(cancellationToken);
         }
         catch (DuplicateJobException)
         {
-            // A concurrent request with the same idempotency key won the race.
+            // A concurrent request with the same idempotency key won the race; the buffered
+            // outbox message is discarded together with the rolled-back transaction.
             var existing = await _jobRepository.GetByIdempotencyKeyAsync(command.IdempotencyKey!, cancellationToken);
             if (existing is not null)
             {
@@ -58,13 +71,6 @@ public sealed class CreateJobCommandHandler
             }
 
             throw;
-        }
-
-        // Only immediately dispatchable jobs are enqueued here; scheduled jobs are
-        // dispatched once due by the worker's scheduled-job dispatcher (phase 17).
-        if (job.Status == JobStatus.Pending)
-        {
-            await _jobPublisher.PublishAsync(job.Id, job.Type, cancellationToken);
         }
 
         return new CreateJobResult(job, AlreadyExisted: false);

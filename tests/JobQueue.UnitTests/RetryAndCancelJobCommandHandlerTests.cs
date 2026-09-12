@@ -52,6 +52,26 @@ public class RetryAndCancelJobCommandHandlerTests
         Assert.Equal((job.Id, job.Type), _publisher.Published);
     }
 
+    [Fact]
+    public async Task Retry_BuffersPublishBeforeSave_ForTransactionalOutbox()
+    {
+        // Phase 22: the publish must be buffered before the save so the state reset
+        // and the outbox message commit in one transaction.
+        var operations = new List<string>();
+        var repository = new FakeJobRepository(operations) { Job = CreateJob(JobStatus.Failed) };
+        var publisher = new FakeJobPublisher(operations);
+
+        await new RetryJobCommandHandler(repository, publisher)
+            .HandleAsync(new RetryJobCommand(repository.Job!.Id));
+
+        var publishIndex = operations.IndexOf("publish");
+        var saveIndex = operations.IndexOf("save");
+
+        Assert.NotEqual(-1, publishIndex);
+        Assert.NotEqual(-1, saveIndex);
+        Assert.True(publishIndex < saveIndex);
+    }
+
     [Theory]
     [InlineData(JobStatus.Pending)]
     [InlineData(JobStatus.Scheduled)]
@@ -145,6 +165,13 @@ public class RetryAndCancelJobCommandHandlerTests
 
     private sealed class FakeJobRepository : IJobRepository
     {
+        private readonly List<string>? _operations;
+
+        public FakeJobRepository(List<string>? operations = null)
+        {
+            _operations = operations;
+        }
+
         public Job? Job { get; set; }
 
         public bool Saved { get; private set; }
@@ -189,6 +216,7 @@ public class RetryAndCancelJobCommandHandlerTests
 
         public Task SaveChangesAsync(CancellationToken cancellationToken = default)
         {
+            _operations?.Add("save");
             Saved = true;
             return Task.CompletedTask;
         }
@@ -196,10 +224,18 @@ public class RetryAndCancelJobCommandHandlerTests
 
     private sealed class FakeJobPublisher : IJobPublisher
     {
+        private readonly List<string>? _operations;
+
+        public FakeJobPublisher(List<string>? operations = null)
+        {
+            _operations = operations;
+        }
+
         public (Guid JobId, string Type)? Published { get; private set; }
 
         public Task PublishAsync(Guid jobId, string type, CancellationToken cancellationToken = default)
         {
+            _operations?.Add("publish");
             Published = (jobId, type);
             return Task.CompletedTask;
         }

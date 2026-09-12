@@ -118,9 +118,12 @@ public sealed class StuckJobRecoveryService : BackgroundService
             job.StartedAt = null;
             job.WorkerId = null;
             job.LastHeartbeatAt = null;
-            await repository.SaveChangesAsync(cancellationToken);
 
+            // Phase 22: publish BEFORE saving so the reset and the outbox message commit
+            // atomically; a concurrency conflict below discards the buffered message.
             await publisher.PublishAsync(job.Id, job.Type, cancellationToken);
+
+            await repository.SaveChangesAsync(cancellationToken);
 
             JobMetrics.JobsRecovered.WithLabels("re_dispatched").Inc();
 

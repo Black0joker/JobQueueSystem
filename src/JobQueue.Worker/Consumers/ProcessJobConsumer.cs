@@ -6,6 +6,7 @@ using JobQueue.Infrastructure.Messaging.Contracts;
 using JobQueue.Worker.Services;
 using JobQueue.Worker.Observability;
 using MassTransit;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 
 namespace JobQueue.Worker.Consumers;
@@ -150,13 +151,19 @@ public sealed class ProcessJobConsumer : IConsumer<ProcessJob>
             job.TransitionTo(JobStatus.Failed);
             job.FailedAt = DateTime.UtcNow;
             job.LastError = error;
-            await _jobRepository.SaveChangesAsync(cancellationToken);
+            if (!await TrySaveClaimAsync(jobId, job, cancellationToken))
+            {
+                return;
+            }
 
             JobMetrics.JobsProcessed.WithLabels(job.Type, "failed").Inc();
             return;
         }
 
-        await _jobRepository.SaveChangesAsync(cancellationToken);
+        if (!await TrySaveClaimAsync(jobId, job, cancellationToken))
+        {
+            return;
+        }
 
         // Phase 15: count every processing attempt (first attempts + retries).
         JobMetrics.JobAttempts.WithLabels(job.Type).Inc();
@@ -206,6 +213,18 @@ public sealed class ProcessJobConsumer : IConsumer<ProcessJob>
                 return;
             }
 
+            if (job.Status != JobStatus.Processing || job.WorkerId != workerId)
+            {
+                // Phase 21: ownership lost (e.g. stuck-job recovery re-dispatched the job).
+                // The winning writer owns the row now; never overwrite its newer state.
+                _logger.LogWarning(
+                    "Job {JobId} is no longer owned by this worker (status {JobStatus}, owner {OwnerWorkerId}); discarding the completed result.",
+                    jobId,
+                    job.Status,
+                    job.WorkerId);
+                return;
+            }
+
             attempt.CompletedAt = DateTime.UtcNow;
 
             job.TransitionTo(JobStatus.Completed);
@@ -251,6 +270,18 @@ public sealed class ProcessJobConsumer : IConsumer<ProcessJob>
                     "Job {JobId} of type {JobType} was cancelled by an operator request.",
                     jobId,
                     job.Type);
+                return;
+            }
+
+            if (job.Status != JobStatus.Processing || job.WorkerId != workerId)
+            {
+                // Phase 21: ownership lost (e.g. stuck-job recovery re-dispatched the job).
+                // Leave the row to its current owner and acknowledge the message.
+                _logger.LogWarning(
+                    "Job {JobId} is no longer owned by this worker (status {JobStatus}, owner {OwnerWorkerId}); discarding the failure.",
+                    jobId,
+                    job.Status,
+                    job.WorkerId);
                 return;
             }
 
@@ -314,6 +345,31 @@ public sealed class ProcessJobConsumer : IConsumer<ProcessJob>
                 jobId,
                 job.Type,
                 job.Attempts);
+        }
+    }
+
+    /// <summary>
+    /// Saves the claim write and detects optimistic concurrency conflicts (phase 21):
+    /// when another writer (another worker's claim, a cancellation request, the stuck-job
+    /// recovery) updated the row since it was loaded, the rowversion check fails. The
+    /// losing worker defers to the winner and acknowledges the message instead of
+    /// silently overwriting the newer state.
+    /// </summary>
+    private async Task<bool> TrySaveClaimAsync(Guid jobId, Job job, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _jobRepository.SaveChangesAsync(cancellationToken);
+            return true;
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            var current = await _jobRepository.GetByIdAsync(jobId, cancellationToken);
+            _logger.LogInformation(
+                "Job {JobId} was updated concurrently during claim (now {JobStatus}); another writer won the race, skipping this delivery.",
+                jobId,
+                current?.Status);
+            return false;
         }
     }
 

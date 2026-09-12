@@ -64,6 +64,17 @@ public static class DependencyInjection
 
                 cfg.ConfigureEndpoints(context);
             });
+
+            // Phase 22: transactional outbox. Messages published through the scoped
+            // IPublishEndpoint are written to the OutboxMessage table inside the same
+            // EF Core transaction as the job changes; an outbox delivery service then
+            // forwards them to RabbitMQ. This closes the dual-write gap where the SQL
+            // commit succeeded but the broker publish failed (or vice versa).
+            x.AddEntityFrameworkOutbox<JobQueueDbContext>(outbox =>
+            {
+                outbox.UseSqlServer();
+                outbox.UseBusOutbox();
+            });
         });
 
         services.AddScoped<IJobPublisher, MassTransitJobPublisher>();

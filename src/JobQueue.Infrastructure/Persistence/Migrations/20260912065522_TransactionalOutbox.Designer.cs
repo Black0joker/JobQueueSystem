@@ -4,6 +4,7 @@ using JobQueue.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace JobQueue.Infrastructure.Persistence.Migrations
 {
     [DbContext(typeof(JobQueueDbContext))]
-    partial class JobQueueDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260912065522_TransactionalOutbox")]
+    partial class TransactionalOutbox
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

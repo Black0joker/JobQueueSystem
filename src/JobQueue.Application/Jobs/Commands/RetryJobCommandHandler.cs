@@ -46,11 +46,13 @@ public sealed class RetryJobCommandHandler
         job.WorkerId = null;
         job.LastHeartbeatAt = null;
 
-        await _jobRepository.SaveChangesAsync(cancellationToken);
-
-        // Re-dispatch: the worker picks the message up like any new job. The consumer's
-        // status guard skips the message if the job is cancelled again before delivery.
+        // Re-dispatch through the transactional outbox (phase 22): publish BEFORE saving so
+        // the state reset and the outbox message commit atomically. The worker picks the
+        // message up like any new job; the consumer's status guard skips the message if the
+        // job is cancelled again before delivery.
         await _jobPublisher.PublishAsync(job.Id, job.Type, cancellationToken);
+
+        await _jobRepository.SaveChangesAsync(cancellationToken);
 
         return job;
     }

@@ -26,6 +26,27 @@ public class CreateJobCommandHandlerTests
     }
 
     [Fact]
+    public async Task HandleAsync_BuffersPublishBeforeSave_ForTransactionalOutbox()
+    {
+        // Phase 22: the MassTransit EF outbox persists the published message inside the
+        // SaveChanges transaction, so the publish must be buffered before the save for
+        // the job row and the outbox message to commit atomically.
+        var operations = new List<string>();
+        var repository = new FakeJobRepository(operations);
+        var publisher = new FakeJobPublisher(operations);
+
+        await new CreateJobCommandHandler(repository, publisher).HandleAsync(
+            new CreateJobCommand("SendEmail", "{}", 0, 3, null, null, null));
+
+        var publishIndex = operations.IndexOf("publish");
+        var saveIndex = operations.IndexOf("save");
+
+        Assert.NotEqual(-1, publishIndex);
+        Assert.NotEqual(-1, saveIndex);
+        Assert.True(publishIndex < saveIndex);
+    }
+
+    [Fact]
     public async Task HandleAsync_DoesNotPublishScheduledJob()
     {
         var repository = new FakeJobRepository();
@@ -75,6 +96,13 @@ public class CreateJobCommandHandlerTests
 
     private sealed class FakeJobRepository : IJobRepository
     {
+        private readonly List<string>? _operations;
+
+        public FakeJobRepository(List<string>? operations = null)
+        {
+            _operations = operations;
+        }
+
         public Job? IdempotencyLookup { get; init; }
 
         public Job? IdempotencyLookupAfterRace { get; init; }
@@ -136,15 +164,26 @@ public class CreateJobCommandHandlerTests
             => Task.CompletedTask;
 
         public Task SaveChangesAsync(CancellationToken cancellationToken = default)
-            => Task.CompletedTask;
+        {
+            _operations?.Add("save");
+            return Task.CompletedTask;
+        }
     }
 
     private sealed class FakeJobPublisher : IJobPublisher
     {
+        private readonly List<string>? _operations;
+
+        public FakeJobPublisher(List<string>? operations = null)
+        {
+            _operations = operations;
+        }
+
         public (Guid JobId, string Type)? Published { get; private set; }
 
         public Task PublishAsync(Guid jobId, string type, CancellationToken cancellationToken = default)
         {
+            _operations?.Add("publish");
             Published = (jobId, type);
             return Task.CompletedTask;
         }
