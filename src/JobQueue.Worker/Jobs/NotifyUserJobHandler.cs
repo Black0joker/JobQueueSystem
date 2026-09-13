@@ -19,7 +19,8 @@ public sealed class NotifyUserJobHandler : IJobHandler
 
     public async Task HandleAsync(JobExecutionContext context, CancellationToken cancellationToken)
     {
-        var userId = context.Payload.TryGetProperty("userId", out var userIdElement)
+        var payload = JobParser.ParsePayload(context.Job.Payload);
+        var userId = payload.TryGetProperty("userId", out var userIdElement)
             ? userIdElement.ToString()
             : null;
         if (string.IsNullOrWhiteSpace(userId))

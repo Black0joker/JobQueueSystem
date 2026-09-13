@@ -19,7 +19,8 @@ public sealed class UpdateInventoryJobHandler : IJobHandler
 
     public async Task HandleAsync(JobExecutionContext context, CancellationToken cancellationToken)
     {
-        var orderId = context.Payload.TryGetProperty("orderId", out var orderIdElement)
+        var payload = JobParser.ParsePayload(context.Job.Payload);
+        var orderId = payload.TryGetProperty("orderId", out var orderIdElement)
             ? orderIdElement.ToString()
             : null;
         if (string.IsNullOrWhiteSpace(orderId))

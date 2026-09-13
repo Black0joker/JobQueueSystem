@@ -39,7 +39,8 @@ public sealed class SendEmailJobHandler : IJobHandler
 
     public async Task HandleAsync(JobExecutionContext context, CancellationToken cancellationToken)
     {
-        var to = context.Payload.TryGetProperty("to", out var toElement) ? toElement.GetString() : null;
+        var payload = JobParser.ParsePayload(context.Job.Payload);
+        var to = payload.TryGetProperty("to", out var toElement) ? toElement.GetString() : null;
         if (string.IsNullOrWhiteSpace(to))
         {
             throw new PermanentJobException("The SendEmail payload is missing the required 'to' property.");
@@ -47,14 +48,14 @@ public sealed class SendEmailJobHandler : IJobHandler
 
         var executionNumber = SimulatedExecutions.AddOrUpdate(context.Job.Id, 1, (_, count) => count + 1);
 
-        FailIfRequested(context, executionNumber);
+        FailIfRequested(context,payload, executionNumber);
 
-        var subject = context.Payload.TryGetProperty("subject", out var subjectElement)
+        var subject = payload.TryGetProperty("subject", out var subjectElement)
             ? subjectElement.GetString()
             : null;
 
         // Simulated SMTP round-trip.
-        await Task.Delay(ResolveWorkDuration(context, executionNumber), cancellationToken);
+        await Task.Delay(ResolveWorkDuration(context,payload, executionNumber), cancellationToken);
 
         _logger.LogInformation(
             "Job {JobId}: simulated email sent to {To} (subject: {Subject}).",
@@ -63,9 +64,9 @@ public sealed class SendEmailJobHandler : IJobHandler
             subject ?? "(none)");
     }
 
-    private static void FailIfRequested(JobExecutionContext context, int executionNumber)
+    private static void FailIfRequested(JobExecutionContext context,JsonElement payload, int executionNumber)
     {
-        var failAttempts = ReadInt(context.Payload, "failAttempts");
+        var failAttempts = ReadInt(payload, "failAttempts");
         if (failAttempts > 0 && executionNumber <= failAttempts)
         {
             throw new TimeoutException(
@@ -73,10 +74,10 @@ public sealed class SendEmailJobHandler : IJobHandler
         }
     }
 
-    private static TimeSpan ResolveWorkDuration(JobExecutionContext context, int executionNumber)
+    private static TimeSpan ResolveWorkDuration(JobExecutionContext context,JsonElement payload, int executionNumber)
     {
-        var workSeconds = ReadInt(context.Payload, "workSeconds");
-        var slowAttempts = ReadInt(context.Payload, "slowAttempts");
+        var workSeconds = ReadInt(payload, "workSeconds");
+        var slowAttempts = ReadInt(payload, "slowAttempts");
 
         if (workSeconds > 0 && slowAttempts > 0 && executionNumber <= slowAttempts)
         {

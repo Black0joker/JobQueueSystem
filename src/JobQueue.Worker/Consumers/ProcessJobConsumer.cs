@@ -203,7 +203,7 @@ public sealed class ProcessJobConsumer : IConsumer<ProcessJob>
 
         try
         {
-            var executionContext = new JobExecutionContext(job, ParsePayload(job.Payload));
+            var executionContext = new JobExecutionContext(job);
             await handler.HandleAsync(executionContext, executionCts.Token);
 
             // Stop the heartbeat before persisting the final state: every tick bumps the
@@ -384,18 +384,5 @@ public sealed class ProcessJobConsumer : IConsumer<ProcessJob>
         }
     }
 
-    private static JsonElement ParsePayload(string payload)
-    {
-        try
-        {
-            using var document = JsonDocument.Parse(payload);
-            return document.RootElement.Clone();
-        }
-        catch (JsonException)
-        {
-            // Payload should always be valid JSON; fall back to an empty object so the
-            // handler's own validation surfaces the problem.
-            return JsonSerializer.SerializeToElement(new { });
-        }
-    }
+    
 }
